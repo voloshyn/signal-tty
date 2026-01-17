@@ -86,6 +86,13 @@ async fn main() -> anyhow::Result<()> {
     let mut needs_redraw = true;
 
     loop {
+        // Check if any images finished loading in background
+        if let Some(cache) = image_cache.as_mut() {
+            if cache.process_pending() {
+                needs_redraw = true;
+            }
+        }
+
         if needs_redraw {
             terminal.draw(|frame| ui::render(frame, &mut app, &mut avatar_manager, &mut image_cache))?;
             needs_redraw = false;
@@ -115,10 +122,7 @@ async fn main() -> anyhow::Result<()> {
                     needs_redraw = true;
                 }
                 Event::Resize(_, _) => {
-                    // Window resized - clear image cache and redraw
-                    if let Some(cache) = image_cache.as_mut() {
-                        cache.clear();
-                    }
+                    // Window resized - just redraw, ratatui-image handles resizing
                     needs_redraw = true;
                 }
                 _ => {}

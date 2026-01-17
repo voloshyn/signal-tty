@@ -133,22 +133,47 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, focused: bool, image
                     y_offset += 1;
 
                     if is_image {
-                        if let (Some(cache), Some(local_path)) = (image_cache.as_mut(), &attachment.local_path) {
-                            if let Some((protocol, img_width, img_height)) = cache.get_image_with_size(local_path, max_img_width) {
-                                let img_start = y_offset.max(0) as u16;
-                                let img_end = (y_offset + img_height as i16).min(inner_area.height as i16) as u16;
+                        if let Some(local_path) = &attachment.local_path {
+                            let img_height = if let Some(cache) = image_cache.as_mut() {
+                                cache.get_image_height(local_path, max_img_width)
+                            } else {
+                                DEFAULT_IMAGE_HEIGHT
+                            };
+                            
+                            let img_start = y_offset.max(0) as u16;
+                            let img_end = (y_offset + img_height as i16).min(inner_area.height as i16) as u16;
+                            
+                            if img_end > img_start {
+                                let is_loading = image_cache.as_ref()
+                                    .map(|c| c.is_loading(local_path))
+                                    .unwrap_or(true);
                                 
-                                if img_end > img_start {
-                                    let image_rect = Rect {
+                                if is_loading {
+                                    // Show loading placeholder
+                                    let placeholder_rect = Rect {
                                         x: inner_area.x + 2,
                                         y: inner_area.y + img_start,
-                                        width: img_width.min(max_img_width),
-                                        height: img_end - img_start,
+                                        width: max_img_width.min(30),
+                                        height: 1,
                                     };
-                                    frame.render_stateful_widget(StatefulImage::new(), image_rect, protocol);
+                                    frame.render_widget(
+                                        Paragraph::new("⏳ Loading image...")
+                                            .style(Style::default().fg(Color::DarkGray)),
+                                        placeholder_rect,
+                                    );
+                                } else if let Some(cache) = image_cache.as_mut() {
+                                    if let Some((protocol, img_width, _)) = cache.get_image_with_size(local_path, max_img_width) {
+                                        let image_rect = Rect {
+                                            x: inner_area.x + 2,
+                                            y: inner_area.y + img_start,
+                                            width: img_width.min(max_img_width),
+                                            height: img_end - img_start,
+                                        };
+                                        frame.render_stateful_widget(StatefulImage::new(), image_rect, protocol);
+                                    }
                                 }
-                                y_offset += img_height as i16;
                             }
+                            y_offset += img_height as i16;
                         }
                     }
                 }
