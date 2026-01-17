@@ -90,10 +90,14 @@ impl InputState {
     }
 }
 
+/// Number of lines to scroll per key press
+pub const SCROLL_LINES: usize = 3;
+
 #[derive(Debug)]
 pub struct ConversationView {
     pub conversation: Conversation,
     pub messages: Option<Vec<Message>>,
+    /// Scroll offset in lines from bottom (0 = at bottom)
     pub scroll_offset: usize,
     pub has_more_messages: bool,
 }
@@ -108,19 +112,42 @@ impl ConversationView {
         }
     }
 
-    pub fn load_messages(&mut self, storage: &SqliteStorage) {
+    pub fn load_messages(&mut self, storage: &SqliteStorage) -> bool {
         if self.messages.is_none() {
             if let Ok(msgs) = storage.list_messages(&self.conversation.id, 100, None) {
                 self.has_more_messages = msgs.len() >= 100;
                 self.messages = Some(msgs);
                 self.scroll_to_bottom();
+                return true;
             }
         }
+        false
     }
 
-    pub fn load_older_messages(&mut self, storage: &SqliteStorage) -> bool {
+    /// Collect all image attachment paths from messages
+    pub fn collect_image_paths(&self) -> Vec<String> {
+        let Some(ref msgs) = self.messages else {
+            return Vec::new();
+        };
+        
+        let mut paths = Vec::new();
+        for msg in msgs {
+            if let MessageContent::Attachment { attachments } = &msg.content {
+                for att in attachments {
+                    if att.content_type.as_ref().map_or(false, |ct| ct.starts_with("image/")) {
+                        if let Some(path) = &att.local_path {
+                            paths.push(path.clone());
+                        }
+                    }
+                }
+            }
+        }
+        paths
+    }
+
+    pub fn load_older_messages(&mut self, storage: &SqliteStorage) -> Vec<String> {
         if !self.has_more_messages {
-            return false;
+            return Vec::new();
         }
         
         let oldest_timestamp = self.messages.as_ref()
@@ -131,11 +158,24 @@ impl ConversationView {
             if let Ok(older_msgs) = storage.list_messages(&self.conversation.id, 100, Some(before_ts)) {
                 if older_msgs.is_empty() {
                     self.has_more_messages = false;
-                    return false;
+                    return Vec::new();
                 }
                 
                 self.has_more_messages = older_msgs.len() >= 100;
-                let num_new = older_msgs.len();
+                
+                // Collect image paths from newly loaded messages
+                let mut paths = Vec::new();
+                for msg in &older_msgs {
+                    if let MessageContent::Attachment { attachments } = &msg.content {
+                        for att in attachments {
+                            if att.content_type.as_ref().map_or(false, |ct| ct.starts_with("image/")) {
+                                if let Some(path) = &att.local_path {
+                                    paths.push(path.clone());
+                                }
+                            }
+                        }
+                    }
+                }
                 
                 if let Some(ref mut msgs) = self.messages {
                     // Prepend older messages
@@ -143,24 +183,22 @@ impl ConversationView {
                     new_msgs.append(msgs);
                     *msgs = new_msgs;
                     
-                    self.scroll_offset += num_new;
-                    return true;
+                    // No scroll_offset adjustment needed - it's line-based from bottom
+                    return paths;
                 }
             }
         }
-        false
+        Vec::new()
     }
 
     pub fn scroll_to_bottom(&mut self) {
-        if let Some(ref msgs) = self.messages {
-            self.scroll_offset = msgs.len().saturating_sub(1);
-        }
+        self.scroll_offset = 0;
     }
 
     pub fn add_message(&mut self, message: Message) {
         if let Some(ref mut msgs) = self.messages {
             msgs.push(message);
-            self.scroll_offset = msgs.len().saturating_sub(1);
+            self.scroll_offset = 0;  // Scroll to bottom
         }
     }
 }
@@ -180,6 +218,8 @@ pub struct App {
     pub status_message: Option<String>,
     pub pending_send: Option<String>,
     pub messages_height: usize,
+    pub needs_image_preload: bool,
+    pub pending_preload_paths: Vec<String>,
 }
 
 impl App {
@@ -197,6 +237,8 @@ impl App {
             status_message: None,
             pending_send: None,
             messages_height: 20,
+            needs_image_preload: false,
+            pending_preload_paths: Vec::new(),
         }
     }
 
@@ -205,9 +247,25 @@ impl App {
             self.conversations = convs.into_iter().map(ConversationView::new).collect();
             if !self.conversations.is_empty() {
                 self.selected = 0;
-                self.conversations[0].load_messages(&self.storage);
+                if self.conversations[0].load_messages(&self.storage) {
+                    self.needs_image_preload = true;
+                }
             }
         }
+    }
+
+    /// Get image paths that need preloading for the selected conversation
+    pub fn take_preload_paths(&mut self) -> Vec<String> {
+        let mut paths = std::mem::take(&mut self.pending_preload_paths);
+        
+        if self.needs_image_preload {
+            self.needs_image_preload = false;
+            if let Some(conv_paths) = self.selected_conversation().map(|c| c.collect_image_paths()) {
+                paths.extend(conv_paths);
+            }
+        }
+        
+        paths
     }
 
     pub fn selected_conversation(&self) -> Option<&ConversationView> {
@@ -221,7 +279,9 @@ impl App {
     pub fn select_next(&mut self) {
         if !self.conversations.is_empty() {
             self.selected = (self.selected + 1) % self.conversations.len();
-            self.conversations[self.selected].load_messages(&self.storage);
+            if self.conversations[self.selected].load_messages(&self.storage) {
+                self.needs_image_preload = true;
+            }
         }
     }
 
@@ -231,53 +291,24 @@ impl App {
                 .selected
                 .checked_sub(1)
                 .unwrap_or(self.conversations.len() - 1);
-            self.conversations[self.selected].load_messages(&self.storage);
-        }
-    }
-
-    fn message_height(msg: &Message) -> usize {
-        match &msg.content {
-            MessageContent::Attachment { attachments } => {
-                let mut h = 0usize;
-                for att in attachments {
-                    h += 1;
-                    if att.content_type.as_ref().map_or(false, |ct| ct.starts_with("image/")) 
-                        && att.local_path.is_some() 
-                    {
-                        h += 8;
-                    }
-                }
-                h.max(1)
-            }
-            _ => 1,
-        }
-    }
-
-    /// Calculate minimum scroll_offset that still fills the screen
-    fn min_scroll_offset(msgs: &[Message], visible_height: usize) -> usize {
-        let mut height_sum = 0usize;
-        for (i, msg) in msgs.iter().enumerate() {
-            height_sum += Self::message_height(msg);
-            if height_sum >= visible_height {
-                return i;
+            if self.conversations[self.selected].load_messages(&self.storage) {
+                self.needs_image_preload = true;
             }
         }
-        0 // If all messages fit, min offset is 0
     }
 
     pub fn scroll_messages_up(&mut self) {
-        let visible_height = self.messages_height;
         let storage = self.storage.clone();
         
         if let Some(conv) = self.selected_conversation_mut() {
-            if let Some(ref msgs) = conv.messages {
-                let min_offset = Self::min_scroll_offset(msgs, visible_height);
-                if conv.scroll_offset > min_offset {
-                    conv.scroll_offset -= 1;
-                } else if conv.has_more_messages {
-                    // At the top, try to load more messages
-                    drop(msgs); // Release borrow before loading
-                    conv.load_older_messages(&storage);
+            // Scroll up by fixed lines
+            conv.scroll_offset += SCROLL_LINES;
+            
+            // Check if we need to load more messages
+            if conv.has_more_messages {
+                let paths = conv.load_older_messages(&storage);
+                if !paths.is_empty() {
+                    self.pending_preload_paths.extend(paths);
                 }
             }
         }
@@ -285,11 +316,8 @@ impl App {
 
     pub fn scroll_messages_down(&mut self) {
         if let Some(conv) = self.selected_conversation_mut() {
-            if let Some(ref msgs) = conv.messages {
-                if conv.scroll_offset < msgs.len().saturating_sub(1) {
-                    conv.scroll_offset += 1;
-                }
-            }
+            // Scroll down by fixed lines, but don't go below 0
+            conv.scroll_offset = conv.scroll_offset.saturating_sub(SCROLL_LINES);
         }
     }
 

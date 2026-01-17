@@ -1,43 +1,37 @@
+use ratatui::layout::Rect;
 use ratatui_image::picker::Picker;
-use ratatui_image::protocol::StatefulProtocol;
+use ratatui_image::protocol::Protocol;
 use ratatui_image::Resize;
+use image::DynamicImage;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
-/// Loaded image data ready to create protocol
+struct CachedImage {
+    protocol: Protocol,
+    render_width: u16,
+    render_height: u16,
+}
+
 struct LoadedImageData {
     path: String,
-    img: image::DynamicImage,
-    width: u32,
-    height: u32,
+    image: DynamicImage,
+    max_width: u16,
 }
 
-struct CachedImage {
-    protocol: StatefulProtocol,
-    width: u32,
-    height: u32,
-}
-
-/// State of an image in the cache
-enum ImageState {
-    /// Image is being loaded in background
+enum CacheEntry {
     Loading,
-    /// Image loaded successfully
     Loaded(CachedImage),
-    /// Image failed to load
     Failed,
 }
 
 pub struct ImageCache {
     picker: Picker,
-    cache: HashMap<String, ImageState>,
+    cache: HashMap<String, CacheEntry>,
     attachments_dir: PathBuf,
-    /// Channel to receive loaded images from background threads
-    load_receiver: Receiver<Option<LoadedImageData>>,
-    /// Channel to send load requests to background
-    load_sender: Sender<(String, PathBuf)>,
+    load_sender: Sender<(String, u16)>,
+    result_receiver: Receiver<LoadedImageData>,
 }
 
 const MAX_IMAGE_WIDTH: u16 = 60;
@@ -48,105 +42,104 @@ impl ImageCache {
     pub fn new() -> Option<Self> {
         let picker = Picker::from_query_stdio().ok()?;
         let attachments_dir = get_attachments_dir()?;
-
-        // Create channels for async image loading
-        let (load_sender, thread_receiver) = mpsc::channel::<(String, PathBuf)>();
-        let (thread_sender, load_receiver) = mpsc::channel::<Option<LoadedImageData>>();
-
-        // Spawn background thread for image loading
+        
+        let (load_sender, load_receiver) = mpsc::channel::<(String, u16)>();
+        let (result_sender, result_receiver) = mpsc::channel::<LoadedImageData>();
+        
+        // Spawn background thread for loading and decoding images
         thread::spawn(move || {
-            while let Ok((path, full_path)) = thread_receiver.recv() {
-                let result = load_image_data(&path, &full_path);
-                let _ = thread_sender.send(result);
+            while let Ok((path, max_width)) = load_receiver.recv() {
+                let full_path = if path.starts_with('/') {
+                    PathBuf::from(&path)
+                } else {
+                    attachments_dir.join(&path)
+                };
+                
+                if let Ok(data) = std::fs::read(&full_path) {
+                    if let Ok(image) = image::load_from_memory(&data) {
+                        let _ = result_sender.send(LoadedImageData {
+                            path,
+                            image,
+                            max_width,
+                        });
+                    }
+                }
             }
         });
 
         Some(Self {
             picker,
             cache: HashMap::new(),
-            attachments_dir,
-            load_receiver,
+            attachments_dir: get_attachments_dir()?,
             load_sender,
+            result_receiver,
         })
     }
 
-    /// Process any completed image loads from background thread
-    pub fn process_pending(&mut self) -> bool {
-        let mut any_loaded = false;
-        while let Ok(result) = self.load_receiver.try_recv() {
-            if let Some(data) = result {
-                let protocol = self.picker.new_resize_protocol(data.img);
-                self.cache.insert(data.path, ImageState::Loaded(CachedImage {
+    /// Process ONE loaded image (to keep UI responsive)
+    /// Returns true if an image was processed (caller should redraw)
+    pub fn process_loaded_images(&mut self) -> bool {
+        // Only process ONE image per call to keep UI responsive
+        if let Ok(loaded) = self.result_receiver.try_recv() {
+            let (render_width, render_height) = calculate_display_size(
+                loaded.image.width(), loaded.image.height(), loaded.max_width
+            );
+            let render_rect = Rect::new(0, 0, render_width, render_height);
+            
+            if let Ok(protocol) = self.picker.new_protocol(loaded.image, render_rect, Resize::Fit(None)) {
+                self.cache.insert(loaded.path, CacheEntry::Loaded(CachedImage {
                     protocol,
-                    width: data.width,
-                    height: data.height,
+                    render_width,
+                    render_height,
                 }));
-                any_loaded = true;
+                return true;
+            } else {
+                self.cache.insert(loaded.path, CacheEntry::Failed);
+                return true; // Still processed something, trigger redraw
             }
         }
-        any_loaded
+        
+        false
     }
 
-    pub fn get_image_with_size(&mut self, path: &str, max_width: u16) -> Option<(&mut StatefulProtocol, u16, u16)> {
-        // First process any pending loads
-        self.process_pending();
-        
-        // Start loading if not in cache
+    /// Returns Some((protocol, width, height)) if loaded, None if loading or failed
+    pub fn get_image_with_size(&mut self, path: &str, max_width: u16) -> Option<(&Protocol, u16, u16)> {
         if !self.cache.contains_key(path) {
-            self.start_loading(path);
-            return None; // Return None while loading
-        }
-        
-        // Check if loaded
-        match self.cache.get_mut(path) {
-            Some(ImageState::Loaded(cached)) => {
-                let (w, h) = calculate_display_size(cached.width, cached.height, max_width);
-                Some((&mut cached.protocol, w, h))
-            }
-            _ => None, // Still loading or failed
-        }
-    }
-
-    fn start_loading(&mut self, path: &str) {
-        let full_path = if path.starts_with('/') {
-            PathBuf::from(path)
-        } else {
-            self.attachments_dir.join(path)
-        };
-
-        if !full_path.exists() {
-            self.cache.insert(path.to_string(), ImageState::Failed);
-            return;
-        }
-
-        // Mark as loading and send to background thread
-        self.cache.insert(path.to_string(), ImageState::Loading);
-        let _ = self.load_sender.send((path.to_string(), full_path));
-    }
-
-    pub fn get_image(&mut self, path: &str) -> Option<&mut StatefulProtocol> {
-        self.get_image_with_size(path, MAX_IMAGE_WIDTH).map(|(p, _, _)| p)
-    }
-
-    /// Check if image is still loading (for showing placeholder)
-    pub fn is_loading(&self, path: &str) -> bool {
-        matches!(self.cache.get(path), Some(ImageState::Loading) | None)
-    }
-
-    pub fn get_image_height(&mut self, path: &str, max_width: u16) -> u16 {
-        self.process_pending();
-        
-        if !self.cache.contains_key(path) {
-            self.start_loading(path);
-            return MIN_IMAGE_HEIGHT; // Return default while loading
+            // Start async load
+            self.cache.insert(path.to_string(), CacheEntry::Loading);
+            let _ = self.load_sender.send((path.to_string(), max_width));
+            return None;
         }
         
         match self.cache.get(path) {
-            Some(ImageState::Loaded(cached)) => {
-                let (_, h) = calculate_display_size(cached.width, cached.height, max_width);
-                h
+            Some(CacheEntry::Loaded(cached)) => {
+                Some((&cached.protocol, cached.render_width, cached.render_height))
             }
-            _ => MIN_IMAGE_HEIGHT,
+            _ => None,
+        }
+    }
+
+    pub fn get_image(&mut self, path: &str) -> Option<&Protocol> {
+        self.get_image_with_size(path, MAX_IMAGE_WIDTH).map(|(p, _, _)| p)
+    }
+
+    /// Returns true if the image is still loading
+    pub fn is_loading(&self, path: &str) -> bool {
+        matches!(self.cache.get(path), Some(CacheEntry::Loading))
+    }
+
+    pub fn get_image_height(&mut self, path: &str, max_width: u16) -> u16 {
+        if !self.cache.contains_key(path) {
+            // Start async load
+            self.cache.insert(path.to_string(), CacheEntry::Loading);
+            let _ = self.load_sender.send((path.to_string(), max_width));
+            return MIN_IMAGE_HEIGHT;
+        }
+        
+        match self.cache.get(path) {
+            Some(CacheEntry::Loaded(cached)) => cached.render_height,
+            Some(CacheEntry::Loading) => MIN_IMAGE_HEIGHT,
+            Some(CacheEntry::Failed) | None => MIN_IMAGE_HEIGHT,
         }
     }
 
@@ -154,28 +147,23 @@ impl ImageCache {
         self.attachments_dir.join(attachment_id)
     }
 
-    pub fn resize(&self) -> Resize {
-        Resize::Fit(None)
+    pub fn clear(&mut self) {
+        self.cache.clear();
     }
 
     pub fn is_image(content_type: Option<&str>) -> bool {
         content_type.map_or(false, |ct| ct.starts_with("image/"))
     }
-}
 
-/// Load image data in background thread
-fn load_image_data(path: &str, full_path: &PathBuf) -> Option<LoadedImageData> {
-    let data = std::fs::read(full_path).ok()?;
-    let img = image::load_from_memory(&data).ok()?;
-    let width = img.width();
-    let height = img.height();
-    
-    Some(LoadedImageData {
-        path: path.to_string(),
-        img,
-        width,
-        height,
-    })
+    /// Preload a list of image paths (queues them for async loading)
+    pub fn preload_images(&mut self, paths: &[String], max_width: u16) {
+        for path in paths {
+            if !self.cache.contains_key(path) {
+                self.cache.insert(path.clone(), CacheEntry::Loading);
+                let _ = self.load_sender.send((path.clone(), max_width));
+            }
+        }
+    }
 }
 
 fn calculate_display_size(img_width: u32, img_height: u32, max_width: u16) -> (u16, u16) {

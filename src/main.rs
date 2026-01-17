@@ -76,6 +76,14 @@ async fn main() -> anyhow::Result<()> {
     let mut avatar_manager = AvatarManager::new();
     let mut image_cache = ImageCache::new();
 
+    // Preload images for initial conversation
+    if let Some(ref mut cache) = image_cache {
+        let paths = app.take_preload_paths();
+        if !paths.is_empty() {
+            cache.preload_images(&paths, 60);  // max_width used for preloading
+        }
+    }
+
     terminal::enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     stdout().execute(cursor::Hide)?;
@@ -86,13 +94,6 @@ async fn main() -> anyhow::Result<()> {
     let mut needs_redraw = true;
 
     loop {
-        // Check if any images finished loading in background
-        if let Some(cache) = image_cache.as_mut() {
-            if cache.process_pending() {
-                needs_redraw = true;
-            }
-        }
-
         if needs_redraw {
             terminal.draw(|frame| ui::render(frame, &mut app, &mut avatar_manager, &mut image_cache))?;
             needs_redraw = false;
@@ -119,6 +120,14 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
                     
+                    // Preload any newly discovered images
+                    if let Some(ref mut cache) = image_cache {
+                        let paths = app.take_preload_paths();
+                        if !paths.is_empty() {
+                            cache.preload_images(&paths, 60);
+                        }
+                    }
+                    
                     needs_redraw = true;
                 }
                 Event::Resize(_, _) => {
@@ -139,7 +148,12 @@ async fn main() -> anyhow::Result<()> {
                 needs_redraw = true;
             }
             Err(_) => {
-                // Timeout, no message
+                // Timeout, no message - check for loaded images
+                if let Some(ref mut cache) = image_cache {
+                    if cache.process_loaded_images() {
+                        needs_redraw = true;
+                    }
+                }
             }
         }
 

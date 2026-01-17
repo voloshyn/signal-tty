@@ -6,7 +6,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
-use ratatui_image::StatefulImage;
+use ratatui_image::Image;
 
 const DEFAULT_IMAGE_HEIGHT: u16 = 8;
 
@@ -71,22 +71,43 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, focused: bool, image
     }
 
     let visible_height = inner_area.height as usize;
-    let total_messages = messages.len();
     let max_img_width = inner_area.width.saturating_sub(4);
     
-    let scroll_offset = conv_view.scroll_offset.min(total_messages.saturating_sub(1));
+    // scroll_offset is lines from bottom (0 = at bottom)
+    let scroll_offset = conv_view.scroll_offset;
     
-    // Calculate start index and total height with dynamic image sizes
-    let mut total_height = 0usize;
-    let mut start_idx = scroll_offset + 1;
-    while start_idx > 0 && total_height < visible_height {
-        start_idx -= 1;
-        total_height += calculate_message_height(&messages[start_idx], image_cache, max_img_width) as usize;
+    // Calculate total content height
+    let mut total_content_height = 0usize;
+    for msg in messages.iter() {
+        total_content_height += calculate_message_height(msg, image_cache, max_img_width) as usize;
     }
     
-    let skip_lines_at_start = total_height.saturating_sub(visible_height);
+    // Clamp scroll_offset to valid range
+    let max_scroll = total_content_height.saturating_sub(visible_height);
+    let scroll_offset = scroll_offset.min(max_scroll);
+    
+    // Calculate which messages to render
+    // We render from bottom up, skipping scroll_offset lines from the bottom
+    let target_bottom = total_content_height.saturating_sub(scroll_offset);
+    let target_top = target_bottom.saturating_sub(visible_height);
+    
+    // Find start message and skip lines
+    let mut cumulative_height = 0usize;
+    let mut start_idx = 0;
+    let mut skip_lines_at_start = 0usize;
+    
+    for (i, msg) in messages.iter().enumerate() {
+        let msg_height = calculate_message_height(msg, image_cache, max_img_width) as usize;
+        if cumulative_height + msg_height > target_top {
+            start_idx = i;
+            skip_lines_at_start = target_top.saturating_sub(cumulative_height);
+            break;
+        }
+        cumulative_height += msg_height;
+    }
+    
     let mut y_offset: i16 = -(skip_lines_at_start as i16);
-    for msg in messages.iter().skip(start_idx).take(scroll_offset + 1 - start_idx) {
+    for msg in messages.iter().skip(start_idx) {
         if y_offset >= inner_area.height as i16 {
             break;
         }
@@ -134,34 +155,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, focused: bool, image
 
                     if is_image {
                         if let Some(local_path) = &attachment.local_path {
-                            let img_height = if let Some(cache) = image_cache.as_mut() {
-                                cache.get_image_height(local_path, max_img_width)
-                            } else {
-                                DEFAULT_IMAGE_HEIGHT
-                            };
-                            
-                            let img_start = y_offset.max(0) as u16;
-                            let img_end = (y_offset + img_height as i16).min(inner_area.height as i16) as u16;
-                            
-                            if img_end > img_start {
-                                let is_loading = image_cache.as_ref()
-                                    .map(|c| c.is_loading(local_path))
-                                    .unwrap_or(true);
+                            if let Some(cache) = image_cache.as_mut() {
+                                let img_height = cache.get_image_height(local_path, max_img_width);
                                 
-                                if is_loading {
-                                    // Show loading placeholder
-                                    let placeholder_rect = Rect {
-                                        x: inner_area.x + 2,
-                                        y: inner_area.y + img_start,
-                                        width: max_img_width.min(30),
-                                        height: 1,
-                                    };
-                                    frame.render_widget(
-                                        Paragraph::new("⏳ Loading image...")
-                                            .style(Style::default().fg(Color::DarkGray)),
-                                        placeholder_rect,
-                                    );
-                                } else if let Some(cache) = image_cache.as_mut() {
+                                let img_start = y_offset.max(0) as u16;
+                                let img_end = (y_offset + img_height as i16).min(inner_area.height as i16) as u16;
+                                
+                                if img_end > img_start {
                                     if let Some((protocol, img_width, _)) = cache.get_image_with_size(local_path, max_img_width) {
                                         let image_rect = Rect {
                                             x: inner_area.x + 2,
@@ -169,11 +169,24 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, focused: bool, image
                                             width: img_width.min(max_img_width),
                                             height: img_end - img_start,
                                         };
-                                        frame.render_stateful_widget(StatefulImage::new(), image_rect, protocol);
+                                        frame.render_widget(Image::new(protocol), image_rect);
+                                    } else if cache.is_loading(local_path) {
+                                        // Show loading placeholder
+                                        let placeholder_rect = Rect {
+                                            x: inner_area.x + 2,
+                                            y: inner_area.y + img_start,
+                                            width: max_img_width,
+                                            height: 1,
+                                        };
+                                        frame.render_widget(
+                                            Paragraph::new("⏳ Loading image...")
+                                                .style(Style::default().fg(Color::DarkGray)),
+                                            placeholder_rect,
+                                        );
                                     }
                                 }
+                                y_offset += img_height as i16;
                             }
-                            y_offset += img_height as i16;
                         }
                     }
                 }
@@ -208,9 +221,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, focused: bool, image
         }
     }
 
-    // Show scroll position indicator
-    if total_messages > 1 {
-        let scroll_pct = ((scroll_offset + 1) as f64 / total_messages as f64 * 100.0) as u16;
+    // Show scroll position indicator (based on line position)
+    if total_content_height > visible_height {
+        let scroll_pct = if max_scroll > 0 {
+            100 - (scroll_offset as f64 / max_scroll as f64 * 100.0) as u16
+        } else {
+            100
+        };
         let indicator = format!(" {}% ", scroll_pct.min(100));
         let indicator_area = Rect {
             x: area.x + area.width - indicator.len() as u16 - 2,
