@@ -79,15 +79,15 @@ impl AvatarManager {
         recipient_uuid: Option<&str>,
         recipient_number: Option<&str>,
     ) -> bool {
-        if let Some(number) = recipient_number {
-            if self.has_avatar_file(number) {
-                return true;
-            }
+        if let Some(number) = recipient_number
+            && self.has_avatar_file(number)
+        {
+            return true;
         }
-        if let Some(uuid) = recipient_uuid {
-            if self.has_avatar_file(uuid) {
-                return true;
-            }
+        if let Some(uuid) = recipient_uuid
+            && self.has_avatar_file(uuid)
+        {
+            return true;
         }
         false
     }

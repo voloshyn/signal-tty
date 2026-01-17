@@ -1,4 +1,4 @@
-use crate::infrastructure::{IncomingMessage, SignalClient, SignalRepository};
+use crate::infrastructure::{IncomingMessage, SignalClient};
 use crate::storage::{
     Conversation, ConversationType, Message, MessageContent, SqliteStorage, StorageRepository,
 };

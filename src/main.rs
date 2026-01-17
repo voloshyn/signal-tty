@@ -8,14 +8,14 @@ mod ui;
 
 use app::{App, SendTarget};
 use avatar::AvatarManager;
+use crossterm::ExecutableCommand;
 use crossterm::cursor;
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::ExecutableCommand;
 use image_cache::ImageCache;
 use infrastructure::{SignalClient, SignalRepository};
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use std::io::stdout;
 use std::sync::Arc;
 use std::time::Duration;
@@ -52,11 +52,13 @@ fn now_millis() -> i64 {
 
 fn get_my_number() -> Option<String> {
     let home = std::env::var("HOME").ok()?;
-    let accounts_path = std::path::PathBuf::from(home)
-        .join(".local/share/signal-cli/data/accounts.json");
+    let accounts_path =
+        std::path::PathBuf::from(home).join(".local/share/signal-cli/data/accounts.json");
     let data = std::fs::read_to_string(accounts_path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&data).ok()?;
-    json["accounts"].get(0)?["number"].as_str().map(String::from)
+    json["accounts"].get(0)?["number"]
+        .as_str()
+        .map(String::from)
 }
 
 #[tokio::main]
@@ -76,14 +78,6 @@ async fn main() -> anyhow::Result<()> {
     let mut avatar_manager = AvatarManager::new();
     let mut image_cache = ImageCache::new();
 
-    // Preload images for initial conversation
-    if let Some(ref mut cache) = image_cache {
-        let paths = app.take_preload_paths();
-        if !paths.is_empty() {
-            cache.preload_images(&paths, 60);  // max_width used for preloading
-        }
-    }
-
     terminal::enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     stdout().execute(cursor::Hide)?;
@@ -95,7 +89,8 @@ async fn main() -> anyhow::Result<()> {
 
     loop {
         if needs_redraw {
-            terminal.draw(|frame| ui::render(frame, &mut app, &mut avatar_manager, &mut image_cache))?;
+            terminal
+                .draw(|frame| ui::render(frame, &mut app, &mut avatar_manager, &mut image_cache))?;
             needs_redraw = false;
         }
 
@@ -105,12 +100,16 @@ async fn main() -> anyhow::Result<()> {
                     // For scroll keys, drain any additional pending scroll events to prevent buffering
                     let is_scroll_key = matches!(
                         key.code,
-                        KeyCode::Up | KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('k') |
-                        KeyCode::PageUp | KeyCode::PageDown
+                        KeyCode::Up
+                            | KeyCode::Down
+                            | KeyCode::Char('j')
+                            | KeyCode::Char('k')
+                            | KeyCode::PageUp
+                            | KeyCode::PageDown
                     );
-                    
+
                     events::handle_key_event(&mut app, key);
-                    
+
                     if is_scroll_key {
                         // Drain buffered scroll events (process them but skip redundant renders)
                         while event::poll(Duration::from_millis(0))? {
@@ -119,7 +118,7 @@ async fn main() -> anyhow::Result<()> {
                             }
                         }
                     }
-                    
+
                     // Preload any newly discovered images
                     if let Some(ref mut cache) = image_cache {
                         let paths = app.take_preload_paths();
@@ -127,7 +126,7 @@ async fn main() -> anyhow::Result<()> {
                             cache.preload_images(&paths, 60);
                         }
                     }
-                    
+
                     needs_redraw = true;
                 }
                 Event::Resize(_, _) => {
@@ -149,10 +148,10 @@ async fn main() -> anyhow::Result<()> {
             }
             Err(_) => {
                 // Timeout, no message - check for loaded images
-                if let Some(ref mut cache) = image_cache {
-                    if cache.process_loaded_images() {
-                        needs_redraw = true;
-                    }
+                if let Some(ref mut cache) = image_cache
+                    && cache.process_loaded_images()
+                {
+                    needs_redraw = true;
                 }
             }
         }
