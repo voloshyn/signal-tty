@@ -94,6 +94,7 @@ impl InputState {
 pub struct ConversationView {
     pub conversation: Conversation,
     pub messages: Option<Vec<Message>>,
+    /// Index of the bottom-most visible message (len-1 = at bottom)
     pub scroll_offset: usize,
 }
 
@@ -124,7 +125,7 @@ impl ConversationView {
     pub fn add_message(&mut self, message: Message) {
         if let Some(ref mut msgs) = self.messages {
             msgs.push(message);
-            self.scroll_to_bottom();
+            self.scroll_offset = msgs.len().saturating_sub(1);
         }
     }
 }
@@ -143,6 +144,7 @@ pub struct App {
     pub should_quit: bool,
     pub status_message: Option<String>,
     pub pending_send: Option<String>,
+    pub messages_height: usize,
 }
 
 impl App {
@@ -159,6 +161,7 @@ impl App {
             should_quit: false,
             status_message: None,
             pending_send: None,
+            messages_height: 20,
         }
     }
 
@@ -197,9 +200,45 @@ impl App {
         }
     }
 
+    fn message_height(msg: &Message) -> usize {
+        match &msg.content {
+            MessageContent::Attachment { attachments } => {
+                let mut h = 0usize;
+                for att in attachments {
+                    h += 1;
+                    if att.content_type.as_ref().map_or(false, |ct| ct.starts_with("image/")) 
+                        && att.local_path.is_some() 
+                    {
+                        h += 8;
+                    }
+                }
+                h.max(1)
+            }
+            _ => 1,
+        }
+    }
+
+    /// Calculate minimum scroll_offset that still fills the screen
+    fn min_scroll_offset(msgs: &[Message], visible_height: usize) -> usize {
+        let mut height_sum = 0usize;
+        for (i, msg) in msgs.iter().enumerate() {
+            height_sum += Self::message_height(msg);
+            if height_sum >= visible_height {
+                return i;
+            }
+        }
+        0 // If all messages fit, min offset is 0
+    }
+
     pub fn scroll_messages_up(&mut self) {
+        let visible_height = self.messages_height;
         if let Some(conv) = self.selected_conversation_mut() {
-            conv.scroll_offset = conv.scroll_offset.saturating_sub(1);
+            if let Some(ref msgs) = conv.messages {
+                let min_offset = Self::min_scroll_offset(msgs, visible_height);
+                if conv.scroll_offset > min_offset {
+                    conv.scroll_offset -= 1;
+                }
+            }
         }
     }
 
@@ -286,12 +325,19 @@ impl App {
             };
 
             if let Some(conv) = conversation {
-                let content = if !text.is_empty() {
-                    MessageContent::Text { body: text }
+                let content = if !data.attachments.is_empty() {
+                    let attachments = data.attachments.iter().map(|a| {
+                        crate::storage::AttachmentInfo {
+                            id: a.id.clone(),
+                            content_type: a.content_type.clone(),
+                            filename: a.filename.clone(),
+                            size: a.size.map(|s| s as u64),
+                            local_path: a.id.clone(),
+                        }
+                    }).collect();
+                    MessageContent::Attachment { attachments }
                 } else {
-                    MessageContent::Text {
-                        body: "[Attachment]".to_string(),
-                    }
+                    MessageContent::Text { body: text }
                 };
 
                 let message = Message {
@@ -318,7 +364,7 @@ impl App {
         if let Some(sync) = &envelope.sync_message {
             if let Some(sent) = &sync.sent_message {
                 let text = sent.message.clone().unwrap_or_default();
-                if text.is_empty() {
+                if text.is_empty() && sent.attachments.is_empty() {
                     return;
                 }
 
@@ -341,6 +387,21 @@ impl App {
                 };
 
                 if let Some(conv) = conversation {
+                    let content = if !sent.attachments.is_empty() {
+                        let attachments = sent.attachments.iter().map(|a| {
+                            crate::storage::AttachmentInfo {
+                                id: a.id.clone(),
+                                content_type: a.content_type.clone(),
+                                filename: a.filename.clone(),
+                                size: a.size.map(|s| s as u64),
+                                local_path: a.id.clone(),
+                            }
+                        }).collect();
+                        MessageContent::Attachment { attachments }
+                    } else {
+                        MessageContent::Text { body: text }
+                    };
+
                     let message = Message {
                         id: uuid::Uuid::new_v4().to_string(),
                         conversation_id: conv.id.clone(),
@@ -349,7 +410,7 @@ impl App {
                         timestamp: sent.timestamp.unwrap_or(timestamp),
                         server_timestamp: None,
                         received_at: now_millis(),
-                        content: MessageContent::Text { body: text },
+                        content,
                         quote: None,
                         is_outgoing: true,
                         is_read: true,
@@ -363,18 +424,21 @@ impl App {
         }
     }
 
-    fn add_message_to_conversation(&mut self, conversation_id: &str, message: Message) {
-        // Find existing conversation view
-        if let Some(conv_view) = self
+    pub fn add_message_to_conversation(&mut self, conversation_id: &str, message: Message) {
+        let found_idx = self
             .conversations
-            .iter_mut()
-            .find(|c| c.conversation.id == conversation_id)
-        {
+            .iter()
+            .position(|c| c.conversation.id == conversation_id);
+
+        if let Some(idx) = found_idx {
+            let conv_view = &mut self.conversations[idx];
+            if conv_view.messages.is_none() {
+                conv_view.load_messages(&self.storage);
+            }
             conv_view.add_message(message);
             return;
         }
 
-        // New conversation - reload list
         self.load_conversations();
     }
 }

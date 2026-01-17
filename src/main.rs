@@ -1,15 +1,18 @@
 mod app;
 mod avatar;
 mod events;
+mod image_cache;
 mod infrastructure;
 mod storage;
 mod ui;
 
 use app::{App, SendTarget};
 use avatar::AvatarManager;
-use crossterm::event::{self, Event};
+use crossterm::cursor;
+use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
+use image_cache::ImageCache;
 use infrastructure::{SignalClient, SignalRepository};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -71,29 +74,55 @@ async fn main() -> anyhow::Result<()> {
     app.load_conversations();
 
     let mut avatar_manager = AvatarManager::new();
+    let mut image_cache = ImageCache::new();
 
     terminal::enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
+    stdout().execute(cursor::Hide)?;
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
+    let mut needs_redraw = true;
+
     loop {
-        terminal.draw(|frame| ui::render(frame, &app, &mut avatar_manager))?;
+        if needs_redraw {
+            terminal.draw(|frame| ui::render(frame, &mut app, &mut avatar_manager, &mut image_cache))?;
+            needs_redraw = false;
+        }
 
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
+                // For scroll keys, drain any additional pending scroll events to prevent buffering
+                let is_scroll_key = matches!(
+                    key.code,
+                    KeyCode::Up | KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('k') |
+                    KeyCode::PageUp | KeyCode::PageDown
+                );
+                
                 events::handle_key_event(&mut app, key);
+                
+                if is_scroll_key {
+                    // Drain buffered scroll events (process them but skip redundant renders)
+                    while event::poll(Duration::from_millis(0))? {
+                        if let Event::Key(next_key) = event::read()? {
+                            events::handle_key_event(&mut app, next_key);
+                        }
+                    }
+                }
+                
+                needs_redraw = true;
             }
         }
 
         match tokio::time::timeout(Duration::from_millis(10), messages.recv()).await {
             Ok(Ok(msg)) => {
                 app.handle_incoming_message(msg);
+                needs_redraw = true;
             }
             Ok(Err(_)) => {
-                // Channel closed
                 app.status_message = Some("Signal connection lost".to_string());
+                needs_redraw = true;
             }
             Err(_) => {
                 // Timeout, no message
@@ -101,6 +130,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         if let Some(text) = app.pending_send.take() {
+            needs_redraw = true;
             if let Some(target) = app.get_send_target() {
                 let result = match &target {
                     SendTarget::Direct(recipient) => {
@@ -122,22 +152,20 @@ async fn main() -> anyhow::Result<()> {
                             let timestamp = send_result.timestamp.unwrap_or_else(now_millis);
                             let message = Message {
                                 id: uuid::Uuid::new_v4().to_string(),
-                                conversation_id: conv_id,
+                                conversation_id: conv_id.clone(),
                                 sender_uuid: my_uuid,
                                 sender_name: None,
                                 timestamp,
                                 server_timestamp: None,
                                 received_at: now_millis(),
-                                content: MessageContent::Text { body: text },
+                                content: MessageContent::Text { body: text.clone() },
                                 quote: None,
                                 is_outgoing: true,
                                 is_read: true,
                                 is_deleted: false,
                             };
                             let _ = app.storage.save_message(&message);
-                            if let Some(conv_view) = app.selected_conversation_mut() {
-                                conv_view.add_message(message);
-                            }
+                            app.add_message_to_conversation(&conv_id, message);
                         }
                         app.status_message = Some("Sent".to_string());
                     }
@@ -153,6 +181,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    stdout().execute(cursor::Show)?;
     terminal::disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
     app.signal.disconnect().await?;

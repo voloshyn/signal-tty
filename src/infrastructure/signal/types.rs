@@ -171,6 +171,8 @@ pub struct SentMessage {
     pub message: Option<String>,
     #[serde(default)]
     pub group_info: Option<GroupInfo>,
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

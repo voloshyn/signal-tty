@@ -61,8 +61,9 @@ fn handle_messages_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Home => {
-            if let Some(conv) = app.selected_conversation_mut() {
-                conv.scroll_offset = 0;
+            // Scroll to top (oldest messages)
+            for _ in 0..1000 {
+                app.scroll_messages_up();
             }
         }
         KeyCode::End => {
