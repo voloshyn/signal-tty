@@ -75,7 +75,7 @@ impl Transport for StdioTransport {
             .arg("jsonRpc")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::null())
             .spawn()
             .map_err(|e| TransportError::ConnectionFailed(format!("Failed to spawn signal-cli: {}", e)))?;
 

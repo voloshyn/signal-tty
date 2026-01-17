@@ -12,3 +12,7 @@ async-trait = "0.1"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 anyhow = "1"
+rusqlite = { version = "0.38", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+crossterm = "0.29"
+directories = "6"
