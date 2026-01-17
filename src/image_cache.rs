@@ -23,7 +23,6 @@ struct ProcessedImage {
 enum CacheEntry {
     Loading,
     Loaded(CachedImage),
-    Failed,
 }
 
 pub struct ImageCache {
@@ -123,11 +122,6 @@ impl ImageCache {
         }
     }
 
-    pub fn get_image(&mut self, path: &str) -> Option<&Protocol> {
-        self.get_image_with_size(path, MAX_IMAGE_WIDTH)
-            .map(|(p, _, _)| p)
-    }
-
     pub fn is_loading(&self, path: &str) -> bool {
         matches!(self.cache.get(path), Some(CacheEntry::Loading))
     }
@@ -137,10 +131,6 @@ impl ImageCache {
             Some(CacheEntry::Loaded(cached)) => cached.render_height,
             _ => MIN_IMAGE_HEIGHT,
         }
-    }
-
-    pub fn clear(&mut self) {
-        self.cache.clear();
     }
 
     pub fn is_image(content_type: Option<&str>) -> bool {
