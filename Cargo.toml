@@ -17,7 +17,10 @@ chrono = { version = "0.4", features = ["serde"] }
 crossterm = "0.29"
 directories = "6"
 ratatui = "0.30"
-ratatui-image = { version = "10", default-features = false, features = ["crossterm", "image-defaults"] }
+ratatui-image = { version = "10", default-features = false, features = [
+    "crossterm",
+    "image-defaults",
+] }
 image = "0.25"
 
 [build-dependencies]
