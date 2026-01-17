@@ -1,10 +1,12 @@
 mod app;
+mod avatar;
 mod events;
 mod infrastructure;
 mod storage;
 mod ui;
 
 use app::{App, SendTarget};
+use avatar::AvatarManager;
 use crossterm::event::{self, Event};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
@@ -58,6 +60,8 @@ async fn main() -> anyhow::Result<()> {
     let mut app = App::new(storage, signal);
     app.load_conversations();
 
+    let mut avatar_manager = AvatarManager::new();
+
     terminal::enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout());
@@ -65,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
     terminal.clear()?;
 
     loop {
-        terminal.draw(|frame| ui::render(frame, &app))?;
+        terminal.draw(|frame| ui::render(frame, &app, &mut avatar_manager))?;
 
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
