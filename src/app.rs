@@ -133,6 +133,7 @@ pub struct App {
     pub storage: Arc<SqliteStorage>,
     pub signal: SignalClient,
     pub my_uuid: Option<String>,
+    pub my_number: Option<String>,
 
     pub conversations: Vec<ConversationView>,
     pub selected: usize,
@@ -145,11 +146,12 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(storage: Arc<SqliteStorage>, signal: SignalClient) -> Self {
+    pub fn new(storage: Arc<SqliteStorage>, signal: SignalClient, my_number: Option<String>) -> Self {
         Self {
             storage,
             signal,
             my_uuid: None,
+            my_number,
             conversations: Vec::new(),
             selected: 0,
             focus: Focus::Conversations,

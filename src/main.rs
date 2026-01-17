@@ -47,9 +47,19 @@ fn now_millis() -> i64 {
         .as_millis() as i64
 }
 
+fn get_my_number() -> Option<String> {
+    let home = std::env::var("HOME").ok()?;
+    let accounts_path = std::path::PathBuf::from(home)
+        .join(".local/share/signal-cli/data/accounts.json");
+    let data = std::fs::read_to_string(accounts_path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&data).ok()?;
+    json["accounts"].get(0)?["number"].as_str().map(String::from)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let account = parse_account();
+    let my_number = account.clone().or_else(get_my_number);
     let db_path = get_data_dir().join("messages.db");
     let storage = Arc::new(SqliteStorage::open(&db_path)?);
     let signal = SignalClient::new(account);
@@ -57,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
     signal.connect().await?;
     let mut messages = signal.incoming_messages();
 
-    let mut app = App::new(storage, signal);
+    let mut app = App::new(storage, signal, my_number);
     app.load_conversations();
 
     let mut avatar_manager = AvatarManager::new();

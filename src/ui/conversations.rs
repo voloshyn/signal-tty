@@ -54,7 +54,15 @@ pub fn render(
         .enumerate()
         .map(|(i, conv_view)| {
             let conv = &conv_view.conversation;
-            let name = conv.display_name();
+            let is_note_to_self = app.my_number.as_ref().map_or(false, |my_num| {
+                conv.recipient_number.as_ref() == Some(my_num)
+                    || conv.recipient_uuid.as_ref() == app.my_uuid.as_ref()
+            });
+            let name = if is_note_to_self {
+                "Note to Self ✅".to_string()
+            } else {
+                conv.display_name()
+            };
 
             let prefix = match conv.conversation_type {
                 ConversationType::Direct => " ",
