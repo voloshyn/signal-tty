@@ -94,8 +94,8 @@ impl InputState {
 pub struct ConversationView {
     pub conversation: Conversation,
     pub messages: Option<Vec<Message>>,
-    /// Index of the bottom-most visible message (len-1 = at bottom)
     pub scroll_offset: usize,
+    pub has_more_messages: bool,
 }
 
 impl ConversationView {
@@ -104,16 +104,51 @@ impl ConversationView {
             conversation,
             messages: None,
             scroll_offset: 0,
+            has_more_messages: true,
         }
     }
 
     pub fn load_messages(&mut self, storage: &SqliteStorage) {
         if self.messages.is_none() {
             if let Ok(msgs) = storage.list_messages(&self.conversation.id, 100, None) {
+                self.has_more_messages = msgs.len() >= 100;
                 self.messages = Some(msgs);
                 self.scroll_to_bottom();
             }
         }
+    }
+
+    pub fn load_older_messages(&mut self, storage: &SqliteStorage) -> bool {
+        if !self.has_more_messages {
+            return false;
+        }
+        
+        let oldest_timestamp = self.messages.as_ref()
+            .and_then(|msgs| msgs.first())
+            .map(|m| m.timestamp);
+        
+        if let Some(before_ts) = oldest_timestamp {
+            if let Ok(older_msgs) = storage.list_messages(&self.conversation.id, 100, Some(before_ts)) {
+                if older_msgs.is_empty() {
+                    self.has_more_messages = false;
+                    return false;
+                }
+                
+                self.has_more_messages = older_msgs.len() >= 100;
+                let num_new = older_msgs.len();
+                
+                if let Some(ref mut msgs) = self.messages {
+                    // Prepend older messages
+                    let mut new_msgs = older_msgs;
+                    new_msgs.append(msgs);
+                    *msgs = new_msgs;
+                    
+                    self.scroll_offset += num_new;
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub fn scroll_to_bottom(&mut self) {
@@ -232,11 +267,17 @@ impl App {
 
     pub fn scroll_messages_up(&mut self) {
         let visible_height = self.messages_height;
+        let storage = self.storage.clone();
+        
         if let Some(conv) = self.selected_conversation_mut() {
             if let Some(ref msgs) = conv.messages {
                 let min_offset = Self::min_scroll_offset(msgs, visible_height);
                 if conv.scroll_offset > min_offset {
                     conv.scroll_offset -= 1;
+                } else if conv.has_more_messages {
+                    // At the top, try to load more messages
+                    drop(msgs); // Release borrow before loading
+                    conv.load_older_messages(&storage);
                 }
             }
         }

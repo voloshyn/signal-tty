@@ -92,26 +92,36 @@ async fn main() -> anyhow::Result<()> {
         }
 
         if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                // For scroll keys, drain any additional pending scroll events to prevent buffering
-                let is_scroll_key = matches!(
-                    key.code,
-                    KeyCode::Up | KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('k') |
-                    KeyCode::PageUp | KeyCode::PageDown
-                );
-                
-                events::handle_key_event(&mut app, key);
-                
-                if is_scroll_key {
-                    // Drain buffered scroll events (process them but skip redundant renders)
-                    while event::poll(Duration::from_millis(0))? {
-                        if let Event::Key(next_key) = event::read()? {
-                            events::handle_key_event(&mut app, next_key);
+            match event::read()? {
+                Event::Key(key) => {
+                    // For scroll keys, drain any additional pending scroll events to prevent buffering
+                    let is_scroll_key = matches!(
+                        key.code,
+                        KeyCode::Up | KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('k') |
+                        KeyCode::PageUp | KeyCode::PageDown
+                    );
+                    
+                    events::handle_key_event(&mut app, key);
+                    
+                    if is_scroll_key {
+                        // Drain buffered scroll events (process them but skip redundant renders)
+                        while event::poll(Duration::from_millis(0))? {
+                            if let Event::Key(next_key) = event::read()? {
+                                events::handle_key_event(&mut app, next_key);
+                            }
                         }
                     }
+                    
+                    needs_redraw = true;
                 }
-                
-                needs_redraw = true;
+                Event::Resize(_, _) => {
+                    // Window resized - clear image cache and redraw
+                    if let Some(cache) = image_cache.as_mut() {
+                        cache.clear();
+                    }
+                    needs_redraw = true;
+                }
+                _ => {}
             }
         }
 

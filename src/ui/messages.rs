@@ -8,22 +8,22 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 use ratatui_image::StatefulImage;
 
-const IMAGE_HEIGHT: u16 = 8;
+const DEFAULT_IMAGE_HEIGHT: u16 = 8;
 
-struct MessageRenderInfo {
-    lines: Vec<Line<'static>>,
-    image_key: Option<String>,
-    image_height: u16,
-}
-
-fn calculate_message_height(msg: &crate::storage::Message) -> u16 {
+fn calculate_message_height(msg: &crate::storage::Message, image_cache: &mut Option<ImageCache>, max_width: u16) -> u16 {
     match &msg.content {
         MessageContent::Attachment { attachments } => {
             let mut h = 0u16;
             for att in attachments {
-                h += 1;
-                if ImageCache::is_image(att.content_type.as_deref()) && att.local_path.is_some() {
-                    h += IMAGE_HEIGHT;
+                h += 1; 
+                if ImageCache::is_image(att.content_type.as_deref()) {
+                    if let Some(local_path) = &att.local_path {
+                        if let Some(cache) = image_cache.as_mut() {
+                            h += cache.get_image_height(local_path, max_width);
+                        } else {
+                            h += DEFAULT_IMAGE_HEIGHT;
+                        }
+                    }
                 }
             }
             h.max(1)
@@ -72,24 +72,20 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, focused: bool, image
 
     let visible_height = inner_area.height as usize;
     let total_messages = messages.len();
+    let max_img_width = inner_area.width.saturating_sub(4);
     
-    // scroll_offset is the index of the bottom-most visible message
     let scroll_offset = conv_view.scroll_offset.min(total_messages.saturating_sub(1));
     
-    // Calculate which messages to show by working backwards from scroll_offset
+    // Calculate start index and total height with dynamic image sizes
     let mut total_height = 0usize;
     let mut start_idx = scroll_offset + 1;
     while start_idx > 0 && total_height < visible_height {
         start_idx -= 1;
-        total_height += calculate_message_height(&messages[start_idx]) as usize;
+        total_height += calculate_message_height(&messages[start_idx], image_cache, max_img_width) as usize;
     }
     
-    // Calculate how many lines to skip at the start if first message is partially visible
     let skip_lines_at_start = total_height.saturating_sub(visible_height);
-    
     let mut y_offset: i16 = -(skip_lines_at_start as i16);
-
-    // Render messages from start_idx to scroll_offset (inclusive)
     for msg in messages.iter().skip(start_idx).take(scroll_offset + 1 - start_idx) {
         if y_offset >= inner_area.height as i16 {
             break;
@@ -125,7 +121,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, focused: bool, image
                         Span::styled(format!("📎 {}", name), Style::default().fg(Color::Yellow)),
                     ]);
                     
-                    // Only render if y_offset is visible
                     if y_offset >= 0 {
                         let header_rect = Rect {
                             x: inner_area.x,
@@ -139,23 +134,22 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, focused: bool, image
 
                     if is_image {
                         if let (Some(cache), Some(local_path)) = (image_cache.as_mut(), &attachment.local_path) {
-                            if let Some(protocol) = cache.get_image(local_path) {
-                                // Calculate visible portion of image
+                            if let Some((protocol, img_width, img_height)) = cache.get_image_with_size(local_path, max_img_width) {
                                 let img_start = y_offset.max(0) as u16;
-                                let img_end = (y_offset + IMAGE_HEIGHT as i16).min(inner_area.height as i16) as u16;
+                                let img_end = (y_offset + img_height as i16).min(inner_area.height as i16) as u16;
                                 
                                 if img_end > img_start {
                                     let image_rect = Rect {
                                         x: inner_area.x + 2,
                                         y: inner_area.y + img_start,
-                                        width: inner_area.width.saturating_sub(4).min(60),
+                                        width: img_width.min(max_img_width),
                                         height: img_end - img_start,
                                     };
                                     frame.render_stateful_widget(StatefulImage::new(), image_rect, protocol);
                                 }
+                                y_offset += img_height as i16;
                             }
                         }
-                        y_offset += IMAGE_HEIGHT as i16;
                     }
                 }
             }
