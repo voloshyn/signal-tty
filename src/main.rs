@@ -94,7 +94,7 @@ async fn main() -> anyhow::Result<()> {
             needs_redraw = false;
         }
 
-        if event::poll(Duration::from_millis(50))? {
+        if event::poll(Duration::from_millis(20))? {
             match event::read()? {
                 Event::Key(key) => {
                     // For scroll keys, drain any additional pending scroll events to prevent buffering
@@ -123,21 +123,28 @@ async fn main() -> anyhow::Result<()> {
                     if let Some(ref mut cache) = image_cache {
                         let paths = app.take_preload_paths();
                         if !paths.is_empty() {
+                            // TODO: hardcoded max width
                             cache.preload_images(&paths, 60);
                         }
                     }
-
                     needs_redraw = true;
                 }
                 Event::Resize(_, _) => {
-                    // Window resized - just redraw, ratatui-image handles resizing
                     needs_redraw = true;
                 }
                 _ => {}
             }
         }
 
-        match tokio::time::timeout(Duration::from_millis(10), messages.recv()).await {
+        // Process one pending loaded image per iteration (non-blocking)
+        if let Some(ref mut cache) = image_cache {
+            if cache.process_next_loaded_image() {
+                needs_redraw = true;
+            }
+        }
+
+        // Check for incoming Signal messages
+        match tokio::time::timeout(Duration::from_millis(20), messages.recv()).await {
             Ok(Ok(msg)) => {
                 app.handle_incoming_message(msg);
                 needs_redraw = true;
@@ -146,14 +153,7 @@ async fn main() -> anyhow::Result<()> {
                 app.status_message = Some("Signal connection lost".to_string());
                 needs_redraw = true;
             }
-            Err(_) => {
-                // Timeout, no message - check for loaded images
-                if let Some(ref mut cache) = image_cache
-                    && cache.process_loaded_images()
-                {
-                    needs_redraw = true;
-                }
-            }
+            Err(_) => {}
         }
 
         if let Some(text) = app.pending_send.take() {

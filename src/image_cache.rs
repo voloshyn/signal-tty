@@ -1,8 +1,7 @@
 use ratatui::layout::Rect;
+use ratatui_image::Resize;
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::Protocol;
-use ratatui_image::Resize;
-use image::DynamicImage;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -14,10 +13,11 @@ struct CachedImage {
     render_height: u16,
 }
 
-struct LoadedImageData {
+struct ProcessedImage {
     path: String,
-    image: DynamicImage,
-    max_width: u16,
+    protocol: Protocol,
+    render_width: u16,
+    render_height: u16,
 }
 
 enum CacheEntry {
@@ -27,11 +27,9 @@ enum CacheEntry {
 }
 
 pub struct ImageCache {
-    picker: Picker,
     cache: HashMap<String, CacheEntry>,
-    attachments_dir: PathBuf,
     load_sender: Sender<(String, u16)>,
-    result_receiver: Receiver<LoadedImageData>,
+    result_receiver: Receiver<Option<ProcessedImage>>,
 }
 
 const MAX_IMAGE_WIDTH: u16 = 60;
@@ -42,75 +40,81 @@ impl ImageCache {
     pub fn new() -> Option<Self> {
         let picker = Picker::from_query_stdio().ok()?;
         let attachments_dir = get_attachments_dir()?;
-        
+
         let (load_sender, load_receiver) = mpsc::channel::<(String, u16)>();
-        let (result_sender, result_receiver) = mpsc::channel::<LoadedImageData>();
-        
-        // Spawn background thread for loading and decoding images
+        let (result_sender, result_receiver) = mpsc::channel::<Option<ProcessedImage>>();
+
         thread::spawn(move || {
+            let picker = picker;
             while let Ok((path, max_width)) = load_receiver.recv() {
                 let full_path = if path.starts_with('/') {
                     PathBuf::from(&path)
                 } else {
                     attachments_dir.join(&path)
                 };
-                
-                if let Ok(data) = std::fs::read(&full_path) {
-                    if let Ok(image) = image::load_from_memory(&data) {
-                        let _ = result_sender.send(LoadedImageData {
-                            path,
-                            image,
-                            max_width,
-                        });
-                    }
-                }
+
+                let result = (|| {
+                    let data = std::fs::read(&full_path).ok()?;
+                    let image = image::load_from_memory(&data).ok()?;
+
+                    let (render_width, render_height) =
+                        calculate_display_size(image.width(), image.height(), max_width);
+                    let render_rect = Rect::new(0, 0, render_width, render_height);
+
+                    let protocol = picker
+                        .new_protocol(image, render_rect, Resize::Fit(None))
+                        .ok()?;
+
+                    Some(ProcessedImage {
+                        path,
+                        protocol,
+                        render_width,
+                        render_height,
+                    })
+                })();
+
+                let _ = result_sender.send(result);
             }
         });
 
         Some(Self {
-            picker,
             cache: HashMap::new(),
-            attachments_dir: get_attachments_dir()?,
             load_sender,
             result_receiver,
         })
     }
 
-    /// Process ONE loaded image (to keep UI responsive)
-    /// Returns true if an image was processed (caller should redraw)
-    pub fn process_loaded_images(&mut self) -> bool {
-        // Only process ONE image per call to keep UI responsive
-        if let Ok(loaded) = self.result_receiver.try_recv() {
-            let (render_width, render_height) = calculate_display_size(
-                loaded.image.width(), loaded.image.height(), loaded.max_width
-            );
-            let render_rect = Rect::new(0, 0, render_width, render_height);
-            
-            if let Ok(protocol) = self.picker.new_protocol(loaded.image, render_rect, Resize::Fit(None)) {
-                self.cache.insert(loaded.path, CacheEntry::Loaded(CachedImage {
-                    protocol,
-                    render_width,
-                    render_height,
-                }));
-                return true;
-            } else {
-                self.cache.insert(loaded.path, CacheEntry::Failed);
-                return true; // Still processed something, trigger redraw
+    pub fn process_next_loaded_image(&mut self) -> bool {
+        if let Ok(result) = self.result_receiver.try_recv() {
+            match result {
+                Some(processed) => {
+                    self.cache.insert(
+                        processed.path,
+                        CacheEntry::Loaded(CachedImage {
+                            protocol: processed.protocol,
+                            render_width: processed.render_width,
+                            render_height: processed.render_height,
+                        }),
+                    );
+                }
+                None => {}
             }
+            return true;
         }
-        
         false
     }
 
-    /// Returns Some((protocol, width, height)) if loaded, None if loading or failed
-    pub fn get_image_with_size(&mut self, path: &str, max_width: u16) -> Option<(&Protocol, u16, u16)> {
+    pub fn get_image_with_size(
+        &mut self,
+        path: &str,
+        max_width: u16,
+    ) -> Option<(&Protocol, u16, u16)> {
         if !self.cache.contains_key(path) {
-            // Start async load
             self.cache.insert(path.to_string(), CacheEntry::Loading);
             let _ = self.load_sender.send((path.to_string(), max_width));
             return None;
         }
-        
+
         match self.cache.get(path) {
             Some(CacheEntry::Loaded(cached)) => {
                 Some((&cached.protocol, cached.render_width, cached.render_height))
@@ -120,31 +124,19 @@ impl ImageCache {
     }
 
     pub fn get_image(&mut self, path: &str) -> Option<&Protocol> {
-        self.get_image_with_size(path, MAX_IMAGE_WIDTH).map(|(p, _, _)| p)
+        self.get_image_with_size(path, MAX_IMAGE_WIDTH)
+            .map(|(p, _, _)| p)
     }
 
-    /// Returns true if the image is still loading
     pub fn is_loading(&self, path: &str) -> bool {
         matches!(self.cache.get(path), Some(CacheEntry::Loading))
     }
 
-    pub fn get_image_height(&mut self, path: &str, max_width: u16) -> u16 {
-        if !self.cache.contains_key(path) {
-            // Start async load
-            self.cache.insert(path.to_string(), CacheEntry::Loading);
-            let _ = self.load_sender.send((path.to_string(), max_width));
-            return MIN_IMAGE_HEIGHT;
-        }
-        
+    pub fn get_image_height(&self, path: &str) -> u16 {
         match self.cache.get(path) {
             Some(CacheEntry::Loaded(cached)) => cached.render_height,
-            Some(CacheEntry::Loading) => MIN_IMAGE_HEIGHT,
-            Some(CacheEntry::Failed) | None => MIN_IMAGE_HEIGHT,
+            _ => MIN_IMAGE_HEIGHT,
         }
-    }
-
-    pub fn resolve_attachment_path(&self, attachment_id: &str) -> PathBuf {
-        self.attachments_dir.join(attachment_id)
     }
 
     pub fn clear(&mut self) {
@@ -152,10 +144,9 @@ impl ImageCache {
     }
 
     pub fn is_image(content_type: Option<&str>) -> bool {
-        content_type.map_or(false, |ct| ct.starts_with("image/"))
+        content_type.is_some_and(|ct| ct.starts_with("image/"))
     }
 
-    /// Preload a list of image paths (queues them for async loading)
     pub fn preload_images(&mut self, paths: &[String], max_width: u16) {
         for path in paths {
             if !self.cache.contains_key(path) {
@@ -170,32 +161,29 @@ fn calculate_display_size(img_width: u32, img_height: u32, max_width: u16) -> (u
     if img_width == 0 || img_height == 0 {
         return (max_width, MIN_IMAGE_HEIGHT);
     }
-    
+
     let aspect_ratio = img_width as f64 / img_height as f64;
-    
-    let cell_aspect = 2.0; // approximate height/width ratio of terminal cells
+
+    let cell_aspect = 2.0;
     let adjusted_ratio = aspect_ratio * cell_aspect;
-    
+
     let display_width = max_width.min(MAX_IMAGE_WIDTH);
     let display_height = (display_width as f64 / adjusted_ratio) as u16;
-    
+
     let display_height = display_height.clamp(MIN_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT);
-    
-    let display_width = if display_height == MAX_IMAGE_HEIGHT || display_height == MIN_IMAGE_HEIGHT {
+
+    let display_width = if display_height == MAX_IMAGE_HEIGHT || display_height == MIN_IMAGE_HEIGHT
+    {
         ((display_height as f64 * adjusted_ratio) as u16).min(display_width)
     } else {
         display_width
     };
-    
+
     (display_width, display_height)
 }
 
 fn get_attachments_dir() -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
     let dir = PathBuf::from(home).join(".local/share/signal-cli/attachments");
-    if dir.exists() {
-        Some(dir)
-    } else {
-        None
-    }
+    if dir.exists() { Some(dir) } else { None }
 }

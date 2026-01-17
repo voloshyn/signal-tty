@@ -17,19 +17,10 @@ pub enum SendTarget {
     Group(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct InputState {
     pub text: String,
     pub cursor: usize,
-}
-
-impl Default for InputState {
-    fn default() -> Self {
-        Self {
-            text: String::new(),
-            cursor: 0,
-        }
-    }
 }
 
 impl InputState {
@@ -90,7 +81,6 @@ impl InputState {
     }
 }
 
-/// Number of lines to scroll per key press
 pub const SCROLL_LINES: usize = 3;
 
 #[derive(Debug)]
@@ -113,31 +103,34 @@ impl ConversationView {
     }
 
     pub fn load_messages(&mut self, storage: &SqliteStorage) -> bool {
-        if self.messages.is_none() {
-            if let Ok(msgs) = storage.list_messages(&self.conversation.id, 100, None) {
-                self.has_more_messages = msgs.len() >= 100;
-                self.messages = Some(msgs);
-                self.scroll_to_bottom();
-                return true;
-            }
+        if self.messages.is_none()
+            && let Ok(msgs) = storage.list_messages(&self.conversation.id, 100, None)
+        {
+            self.has_more_messages = msgs.len() >= 100;
+            self.messages = Some(msgs);
+            self.scroll_to_bottom();
+            return true;
         }
         false
     }
 
-    /// Collect all image attachment paths from messages
+    /// Collect all image attachment paths from messages (newest first, matching storage order)
     pub fn collect_image_paths(&self) -> Vec<String> {
         let Some(ref msgs) = self.messages else {
             return Vec::new();
         };
-        
+
         let mut paths = Vec::new();
-        for msg in msgs {
+        for msg in msgs.iter() {
             if let MessageContent::Attachment { attachments } = &msg.content {
                 for att in attachments {
-                    if att.content_type.as_ref().map_or(false, |ct| ct.starts_with("image/")) {
-                        if let Some(path) = &att.local_path {
-                            paths.push(path.clone());
-                        }
+                    if att
+                        .content_type
+                        .as_ref()
+                        .is_some_and(|ct| ct.starts_with("image/"))
+                        && let Some(path) = &att.local_path
+                    {
+                        paths.push(path.clone());
                     }
                 }
             }
@@ -149,43 +142,49 @@ impl ConversationView {
         if !self.has_more_messages {
             return Vec::new();
         }
-        
-        let oldest_timestamp = self.messages.as_ref()
+
+        let oldest_timestamp = self
+            .messages
+            .as_ref()
             .and_then(|msgs| msgs.first())
             .map(|m| m.timestamp);
-        
-        if let Some(before_ts) = oldest_timestamp {
-            if let Ok(older_msgs) = storage.list_messages(&self.conversation.id, 100, Some(before_ts)) {
-                if older_msgs.is_empty() {
-                    self.has_more_messages = false;
-                    return Vec::new();
-                }
-                
-                self.has_more_messages = older_msgs.len() >= 100;
-                
-                // Collect image paths from newly loaded messages
-                let mut paths = Vec::new();
-                for msg in &older_msgs {
-                    if let MessageContent::Attachment { attachments } = &msg.content {
-                        for att in attachments {
-                            if att.content_type.as_ref().map_or(false, |ct| ct.starts_with("image/")) {
-                                if let Some(path) = &att.local_path {
-                                    paths.push(path.clone());
-                                }
-                            }
+
+        if let Some(before_ts) = oldest_timestamp
+            && let Ok(older_msgs) =
+                storage.list_messages(&self.conversation.id, 100, Some(before_ts))
+        {
+            if older_msgs.is_empty() {
+                self.has_more_messages = false;
+                return Vec::new();
+            }
+
+            self.has_more_messages = older_msgs.len() >= 100;
+
+            // Collect image paths from newly loaded messages
+            let mut paths = Vec::new();
+            for msg in &older_msgs {
+                if let MessageContent::Attachment { attachments } = &msg.content {
+                    for att in attachments {
+                        if att
+                            .content_type
+                            .as_ref()
+                            .is_some_and(|ct| ct.starts_with("image/"))
+                            && let Some(path) = &att.local_path
+                        {
+                            paths.push(path.clone());
                         }
                     }
                 }
-                
-                if let Some(ref mut msgs) = self.messages {
-                    // Prepend older messages
-                    let mut new_msgs = older_msgs;
-                    new_msgs.append(msgs);
-                    *msgs = new_msgs;
-                    
-                    // No scroll_offset adjustment needed - it's line-based from bottom
-                    return paths;
-                }
+            }
+
+            if let Some(ref mut msgs) = self.messages {
+                // Prepend older messages
+                let mut new_msgs = older_msgs;
+                new_msgs.append(msgs);
+                *msgs = new_msgs;
+
+                // No scroll_offset adjustment needed - it's line-based from bottom
+                return paths;
             }
         }
         Vec::new()
@@ -198,7 +197,7 @@ impl ConversationView {
     pub fn add_message(&mut self, message: Message) {
         if let Some(ref mut msgs) = self.messages {
             msgs.push(message);
-            self.scroll_offset = 0;  // Scroll to bottom
+            self.scroll_offset = 0; // Scroll to bottom
         }
     }
 }
@@ -223,7 +222,11 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(storage: Arc<SqliteStorage>, signal: SignalClient, my_number: Option<String>) -> Self {
+    pub fn new(
+        storage: Arc<SqliteStorage>,
+        signal: SignalClient,
+        my_number: Option<String>,
+    ) -> Self {
         Self {
             storage,
             signal,
@@ -254,17 +257,19 @@ impl App {
         }
     }
 
-    /// Get image paths that need preloading for the selected conversation
     pub fn take_preload_paths(&mut self) -> Vec<String> {
         let mut paths = std::mem::take(&mut self.pending_preload_paths);
-        
+
         if self.needs_image_preload {
             self.needs_image_preload = false;
-            if let Some(conv_paths) = self.selected_conversation().map(|c| c.collect_image_paths()) {
+            if let Some(conv_paths) = self
+                .selected_conversation()
+                .map(|c| c.collect_image_paths())
+            {
                 paths.extend(conv_paths);
             }
         }
-        
+
         paths
     }
 
@@ -299,11 +304,11 @@ impl App {
 
     pub fn scroll_messages_up(&mut self) {
         let storage = self.storage.clone();
-        
+
         if let Some(conv) = self.selected_conversation_mut() {
             // Scroll up by fixed lines
             conv.scroll_offset += SCROLL_LINES;
-            
+
             // Check if we need to load more messages
             if conv.has_more_messages {
                 let paths = conv.load_older_messages(&storage);
@@ -329,6 +334,7 @@ impl App {
         };
     }
 
+    #[allow(dead_code)]
     pub fn focus_input(&mut self) {
         self.focus = Focus::Input;
     }
@@ -364,7 +370,7 @@ impl App {
             None => return,
         };
         let sender_name = envelope.source_name.clone();
-        let timestamp = envelope.timestamp.unwrap_or_else(|| now_millis());
+        let timestamp = envelope.timestamp.unwrap_or_else(now_millis);
 
         if let Some(data) = &envelope.data_message {
             let text = data.message.clone().unwrap_or_default();
@@ -395,15 +401,17 @@ impl App {
 
             if let Some(conv) = conversation {
                 let content = if !data.attachments.is_empty() {
-                    let attachments = data.attachments.iter().map(|a| {
-                        crate::storage::AttachmentInfo {
+                    let attachments = data
+                        .attachments
+                        .iter()
+                        .map(|a| crate::storage::AttachmentInfo {
                             id: a.id.clone(),
                             content_type: a.content_type.clone(),
                             filename: a.filename.clone(),
                             size: a.size.map(|s| s as u64),
                             local_path: a.id.clone(),
-                        }
-                    }).collect();
+                        })
+                        .collect();
                     MessageContent::Attachment { attachments }
                 } else {
                     MessageContent::Text { body: text }
@@ -429,66 +437,67 @@ impl App {
             }
         }
 
-        // Handle sync_message (our messages from other devices)
-        if let Some(sync) = &envelope.sync_message {
-            if let Some(sent) = &sync.sent_message {
-                let text = sent.message.clone().unwrap_or_default();
-                if text.is_empty() && sent.attachments.is_empty() {
-                    return;
-                }
+        if let Some(sync) = &envelope.sync_message
+            && let Some(sent) = &sync.sent_message
+        {
+            let text = sent.message.clone().unwrap_or_default();
+            if text.is_empty() && sent.attachments.is_empty() {
+                return;
+            }
 
-                let group_info = sent.group_info.as_ref();
+            let group_info = sent.group_info.as_ref();
 
-                let conversation = if let Some(group) = group_info {
-                    self.storage
-                        .get_or_create_group_conversation(&group.group_id, None)
-                        .ok()
-                } else if let Some(dest) = &sent.destination_uuid {
-                    self.storage
-                        .get_or_create_direct_conversation(dest, sent.destination.as_deref(), None)
-                        .ok()
-                } else if let Some(dest) = &sent.destination {
-                    self.storage
-                        .get_or_create_direct_conversation(dest, Some(dest), None)
-                        .ok()
+            let conversation = if let Some(group) = group_info {
+                self.storage
+                    .get_or_create_group_conversation(&group.group_id, None)
+                    .ok()
+            } else if let Some(dest) = &sent.destination_uuid {
+                self.storage
+                    .get_or_create_direct_conversation(dest, sent.destination.as_deref(), None)
+                    .ok()
+            } else if let Some(dest) = &sent.destination {
+                self.storage
+                    .get_or_create_direct_conversation(dest, Some(dest), None)
+                    .ok()
+            } else {
+                None
+            };
+
+            if let Some(conv) = conversation {
+                let content = if !sent.attachments.is_empty() {
+                    let attachments = sent
+                        .attachments
+                        .iter()
+                        .map(|a| crate::storage::AttachmentInfo {
+                            id: a.id.clone(),
+                            content_type: a.content_type.clone(),
+                            filename: a.filename.clone(),
+                            size: a.size.map(|s| s as u64),
+                            local_path: a.id.clone(),
+                        })
+                        .collect();
+                    MessageContent::Attachment { attachments }
                 } else {
-                    None
+                    MessageContent::Text { body: text }
                 };
 
-                if let Some(conv) = conversation {
-                    let content = if !sent.attachments.is_empty() {
-                        let attachments = sent.attachments.iter().map(|a| {
-                            crate::storage::AttachmentInfo {
-                                id: a.id.clone(),
-                                content_type: a.content_type.clone(),
-                                filename: a.filename.clone(),
-                                size: a.size.map(|s| s as u64),
-                                local_path: a.id.clone(),
-                            }
-                        }).collect();
-                        MessageContent::Attachment { attachments }
-                    } else {
-                        MessageContent::Text { body: text }
-                    };
+                let message = Message {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    conversation_id: conv.id.clone(),
+                    sender_uuid: sender_uuid.clone(),
+                    sender_name: sender_name.clone(),
+                    timestamp: sent.timestamp.unwrap_or(timestamp),
+                    server_timestamp: None,
+                    received_at: now_millis(),
+                    content,
+                    quote: None,
+                    is_outgoing: true,
+                    is_read: true,
+                    is_deleted: false,
+                };
 
-                    let message = Message {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        conversation_id: conv.id.clone(),
-                        sender_uuid: sender_uuid.clone(),
-                        sender_name: sender_name.clone(),
-                        timestamp: sent.timestamp.unwrap_or(timestamp),
-                        server_timestamp: None,
-                        received_at: now_millis(),
-                        content,
-                        quote: None,
-                        is_outgoing: true,
-                        is_read: true,
-                        is_deleted: false,
-                    };
-
-                    let _ = self.storage.save_message(&message);
-                    self.add_message_to_conversation(&conv.id, message);
-                }
+                let _ = self.storage.save_message(&message);
+                self.add_message_to_conversation(&conv.id, message);
             }
         }
     }

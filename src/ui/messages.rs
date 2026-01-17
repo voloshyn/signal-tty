@@ -10,16 +10,16 @@ use ratatui_image::Image;
 
 const DEFAULT_IMAGE_HEIGHT: u16 = 8;
 
-fn calculate_message_height(msg: &crate::storage::Message, image_cache: &mut Option<ImageCache>, max_width: u16) -> u16 {
+fn calculate_message_height(msg: &crate::storage::Message, image_cache: &Option<ImageCache>) -> u16 {
     match &msg.content {
         MessageContent::Attachment { attachments } => {
             let mut h = 0u16;
             for att in attachments {
-                h += 1; 
+                h += 1;
                 if ImageCache::is_image(att.content_type.as_deref()) {
                     if let Some(local_path) = &att.local_path {
-                        if let Some(cache) = image_cache.as_mut() {
-                            h += cache.get_image_height(local_path, max_width);
+                        if let Some(cache) = image_cache.as_ref() {
+                            h += cache.get_image_height(local_path);
                         } else {
                             h += DEFAULT_IMAGE_HEIGHT;
                         }
@@ -49,55 +49,54 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, focused: bool, image
     app.messages_height = inner_area.height as usize;
     frame.render_widget(block, area);
 
-    let Some(conv_view) = app.selected_conversation() else {
-        let empty = Paragraph::new("No conversation selected")
-            .style(Style::default().fg(Color::DarkGray));
-        frame.render_widget(empty, inner_area);
-        return;
-    };
+    let (messages, mut scroll_offset) = {
+        let Some(conv_view) = app.selected_conversation() else {
+            let empty = Paragraph::new("No conversation selected")
+                .style(Style::default().fg(Color::DarkGray));
+            frame.render_widget(empty, inner_area);
+            return;
+        };
 
-    let Some(ref messages) = conv_view.messages else {
-        let loading = Paragraph::new("Loading...")
-            .style(Style::default().fg(Color::DarkGray));
-        frame.render_widget(loading, inner_area);
-        return;
-    };
+        let Some(ref msgs) = conv_view.messages else {
+            let loading = Paragraph::new("Loading...")
+                .style(Style::default().fg(Color::DarkGray));
+            frame.render_widget(loading, inner_area);
+            return;
+        };
 
-    if messages.is_empty() {
-        let empty = Paragraph::new("No messages yet")
-            .style(Style::default().fg(Color::DarkGray));
-        frame.render_widget(empty, inner_area);
-        return;
-    }
+        if msgs.is_empty() {
+            let empty = Paragraph::new("No messages yet")
+                .style(Style::default().fg(Color::DarkGray));
+            frame.render_widget(empty, inner_area);
+            return;
+        }
+
+        (msgs.clone(), conv_view.scroll_offset)
+    };
 
     let visible_height = inner_area.height as usize;
     let max_img_width = inner_area.width.saturating_sub(4);
-    
-    // scroll_offset is lines from bottom (0 = at bottom)
-    let scroll_offset = conv_view.scroll_offset;
-    
-    // Calculate total content height
+
     let mut total_content_height = 0usize;
     for msg in messages.iter() {
-        total_content_height += calculate_message_height(msg, image_cache, max_img_width) as usize;
+        total_content_height += calculate_message_height(msg, image_cache) as usize;
+    }
+
+    let max_scroll = total_content_height.saturating_sub(visible_height);
+    scroll_offset = scroll_offset.min(max_scroll);
+    if let Some(conv) = app.selected_conversation_mut() {
+        conv.scroll_offset = scroll_offset;
     }
     
-    // Clamp scroll_offset to valid range
-    let max_scroll = total_content_height.saturating_sub(visible_height);
-    let scroll_offset = scroll_offset.min(max_scroll);
-    
-    // Calculate which messages to render
-    // We render from bottom up, skipping scroll_offset lines from the bottom
     let target_bottom = total_content_height.saturating_sub(scroll_offset);
     let target_top = target_bottom.saturating_sub(visible_height);
     
-    // Find start message and skip lines
     let mut cumulative_height = 0usize;
     let mut start_idx = 0;
     let mut skip_lines_at_start = 0usize;
     
     for (i, msg) in messages.iter().enumerate() {
-        let msg_height = calculate_message_height(msg, image_cache, max_img_width) as usize;
+        let msg_height = calculate_message_height(msg, image_cache) as usize;
         if cumulative_height + msg_height > target_top {
             start_idx = i;
             skip_lines_at_start = target_top.saturating_sub(cumulative_height);
@@ -156,7 +155,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, focused: bool, image
                     if is_image {
                         if let Some(local_path) = &attachment.local_path {
                             if let Some(cache) = image_cache.as_mut() {
-                                let img_height = cache.get_image_height(local_path, max_img_width);
+                                let img_height = cache.get_image_height(local_path);
                                 
                                 let img_start = y_offset.max(0) as u16;
                                 let img_end = (y_offset + img_height as i16).min(inner_area.height as i16) as u16;
@@ -171,7 +170,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, focused: bool, image
                                         };
                                         frame.render_widget(Image::new(protocol), image_rect);
                                     } else if cache.is_loading(local_path) {
-                                        // Show loading placeholder
                                         let placeholder_rect = Rect {
                                             x: inner_area.x + 2,
                                             y: inner_area.y + img_start,
@@ -221,7 +219,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App, focused: bool, image
         }
     }
 
-    // Show scroll position indicator (based on line position)
     if total_content_height > visible_height {
         let scroll_pct = if max_scroll > 0 {
             100 - (scroll_offset as f64 / max_scroll as f64 * 100.0) as u16
