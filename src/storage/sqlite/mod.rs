@@ -2,7 +2,7 @@ mod migrations;
 
 use super::models::*;
 use super::repository::{StorageError, StorageRepository};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -12,19 +12,11 @@ pub struct SqliteStorage {
 
 impl SqliteStorage {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
-        let conn = Connection::open(path)
-            .map_err(|e| StorageError::Database(e.to_string()))?;
+        let conn = Connection::open(path).map_err(|e| StorageError::Database(e.to_string()))?;
 
-        let storage = Self { conn: Mutex::new(conn) };
-        storage.run_migrations()?;
-        Ok(storage)
-    }
-
-    pub fn open_in_memory() -> Result<Self, StorageError> {
-        let conn = Connection::open_in_memory()
-            .map_err(|e| StorageError::Database(e.to_string()))?;
-
-        let storage = Self { conn: Mutex::new(conn) };
+        let storage = Self {
+            conn: Mutex::new(conn),
+        };
         storage.run_migrations()?;
         Ok(storage)
     }
@@ -50,33 +42,49 @@ impl SqliteStorage {
 
     fn parse_message_content(content_type: &str, content_data: &str) -> MessageContent {
         match content_type {
-            "text" => MessageContent::Text { body: content_data.to_string() },
+            "text" => MessageContent::Text {
+                body: content_data.to_string(),
+            },
             "attachment" => {
-                let attachments: Vec<AttachmentInfo> = serde_json::from_str(content_data).unwrap_or_default();
+                let attachments: Vec<AttachmentInfo> =
+                    serde_json::from_str(content_data).unwrap_or_default();
                 MessageContent::Attachment { attachments }
             }
             "sticker" => {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(content_data) {
                     MessageContent::Sticker {
-                        pack_id: v.get("pack_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        sticker_id: v.get("sticker_id").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+                        pack_id: v
+                            .get("pack_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        sticker_id: v.get("sticker_id").and_then(|v| v.as_i64()).unwrap_or(0)
+                            as i32,
                     }
                 } else {
-                    MessageContent::Text { body: String::new() }
+                    MessageContent::Text {
+                        body: String::new(),
+                    }
                 }
             }
             "deleted" => MessageContent::RemoteDeleted,
-            _ => MessageContent::Text { body: content_data.to_string() },
+            _ => MessageContent::Text {
+                body: content_data.to_string(),
+            },
         }
     }
 
     fn message_content_to_parts(content: &MessageContent) -> (&'static str, String) {
         match content {
             MessageContent::Text { body } => ("text", body.clone()),
-            MessageContent::Attachment { attachments } => {
-                ("attachment", serde_json::to_string(attachments).unwrap_or_default())
-            }
-            MessageContent::Sticker { pack_id, sticker_id } => {
+            MessageContent::Attachment { attachments } => (
+                "attachment",
+                serde_json::to_string(attachments).unwrap_or_default(),
+            ),
+            MessageContent::Sticker {
+                pack_id,
+                sticker_id,
+            } => {
                 let data = serde_json::json!({ "pack_id": pack_id, "sticker_id": sticker_id });
                 ("sticker", data.to_string())
             }
@@ -186,7 +194,10 @@ impl StorageRepository for SqliteStorage {
         ).optional().map_err(|e| StorageError::Database(e.to_string()))
     }
 
-    fn get_conversation_by_recipient(&self, recipient_uuid: &str) -> Result<Option<Conversation>, StorageError> {
+    fn get_conversation_by_recipient(
+        &self,
+        recipient_uuid: &str,
+    ) -> Result<Option<Conversation>, StorageError> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
             "SELECT id, conversation_type, recipient_uuid, recipient_number, recipient_name,
@@ -211,7 +222,10 @@ impl StorageRepository for SqliteStorage {
         ).optional().map_err(|e| StorageError::Database(e.to_string()))
     }
 
-    fn get_conversation_by_group(&self, group_id: &str) -> Result<Option<Conversation>, StorageError> {
+    fn get_conversation_by_group(
+        &self,
+        group_id: &str,
+    ) -> Result<Option<Conversation>, StorageError> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
             "SELECT id, conversation_type, recipient_uuid, recipient_number, recipient_name,
@@ -245,21 +259,23 @@ impl StorageRepository for SqliteStorage {
              ORDER BY last_message_timestamp DESC NULLS LAST"
         ).map_err(|e| StorageError::Database(e.to_string()))?;
 
-        let rows = stmt.query_map([], |row| {
-            Ok(Conversation {
-                id: row.get(0)?,
-                conversation_type: Self::parse_conversation_type(&row.get::<_, String>(1)?),
-                recipient_uuid: row.get(2)?,
-                recipient_number: row.get(3)?,
-                recipient_name: row.get(4)?,
-                group_id: row.get(5)?,
-                group_name: row.get(6)?,
-                last_message_timestamp: row.get(7)?,
-                unread_count: row.get(8)?,
-                is_archived: row.get::<_, i32>(9)? != 0,
-                is_muted: row.get::<_, i32>(10)? != 0,
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(Conversation {
+                    id: row.get(0)?,
+                    conversation_type: Self::parse_conversation_type(&row.get::<_, String>(1)?),
+                    recipient_uuid: row.get(2)?,
+                    recipient_number: row.get(3)?,
+                    recipient_name: row.get(4)?,
+                    group_id: row.get(5)?,
+                    group_name: row.get(6)?,
+                    last_message_timestamp: row.get(7)?,
+                    unread_count: row.get(8)?,
+                    is_archived: row.get::<_, i32>(9)? != 0,
+                    is_muted: row.get::<_, i32>(10)? != 0,
+                })
             })
-        }).map_err(|e| StorageError::Database(e.to_string()))?;
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| StorageError::Database(e.to_string()))
@@ -287,13 +303,16 @@ impl StorageRepository for SqliteStorage {
                 conversation.is_archived as i32,
                 conversation.is_muted as i32,
             ],
-        ).map_err(|e| StorageError::Database(e.to_string()))?;
+        )
+        .map_err(|e| StorageError::Database(e.to_string()))?;
         Ok(())
     }
 
     fn save_message(&self, message: &Message) -> Result<(), StorageError> {
         let (content_type, content_data) = Self::message_content_to_parts(&message.content);
-        let quote_json = message.quote.as_ref()
+        let quote_json = message
+            .quote
+            .as_ref()
             .map(|q| serde_json::to_string(q).unwrap_or_default());
 
         let conn = self.conn.lock().unwrap();
@@ -358,7 +377,11 @@ impl StorageRepository for SqliteStorage {
         ).optional().map_err(|e| StorageError::Database(e.to_string()))
     }
 
-    fn get_message_by_signal_id(&self, sender_uuid: &str, timestamp: i64) -> Result<Option<Message>, StorageError> {
+    fn get_message_by_signal_id(
+        &self,
+        sender_uuid: &str,
+        timestamp: i64,
+    ) -> Result<Option<Message>, StorageError> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
             "SELECT id, conversation_id, sender_uuid, sender_name, timestamp, server_timestamp, received_at,
@@ -388,10 +411,17 @@ impl StorageRepository for SqliteStorage {
         ).optional().map_err(|e| StorageError::Database(e.to_string()))
     }
 
-    fn list_messages(&self, conversation_id: &str, limit: u32, before_timestamp: Option<i64>) -> Result<Vec<Message>, StorageError> {
+    fn list_messages(
+        &self,
+        conversation_id: &str,
+        limit: u32,
+        before_timestamp: Option<i64>,
+    ) -> Result<Vec<Message>, StorageError> {
         let conn = self.conn.lock().unwrap();
 
-        let (sql, params_vec): (&str, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(ts) = before_timestamp {
+        let (sql, params_vec): (&str, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(ts) =
+            before_timestamp
+        {
             (
                 "SELECT id, conversation_id, sender_uuid, sender_name, timestamp, server_timestamp, received_at,
                         content_type, content_data, quote_json, is_outgoing, is_read, is_deleted
@@ -409,32 +439,38 @@ impl StorageRepository for SqliteStorage {
             )
         };
 
-        let mut stmt = conn.prepare(sql).map_err(|e| StorageError::Database(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
-        let rows = stmt.query_map(params_refs.as_slice(), |row| {
-            let content_type: String = row.get(7)?;
-            let content_data: String = row.get(8)?;
-            let quote_json: Option<String> = row.get(9)?;
+        let rows = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                let content_type: String = row.get(7)?;
+                let content_data: String = row.get(8)?;
+                let quote_json: Option<String> = row.get(9)?;
 
-            Ok(Message {
-                id: row.get(0)?,
-                conversation_id: row.get(1)?,
-                sender_uuid: row.get(2)?,
-                sender_name: row.get(3)?,
-                timestamp: row.get(4)?,
-                server_timestamp: row.get(5)?,
-                received_at: row.get(6)?,
-                content: Self::parse_message_content(&content_type, &content_data),
-                quote: quote_json.and_then(|s| serde_json::from_str(&s).ok()),
-                is_outgoing: row.get::<_, i32>(10)? != 0,
-                is_read: row.get::<_, i32>(11)? != 0,
-                is_deleted: row.get::<_, i32>(12)? != 0,
+                Ok(Message {
+                    id: row.get(0)?,
+                    conversation_id: row.get(1)?,
+                    sender_uuid: row.get(2)?,
+                    sender_name: row.get(3)?,
+                    timestamp: row.get(4)?,
+                    server_timestamp: row.get(5)?,
+                    received_at: row.get(6)?,
+                    content: Self::parse_message_content(&content_type, &content_data),
+                    quote: quote_json.and_then(|s| serde_json::from_str(&s).ok()),
+                    is_outgoing: row.get::<_, i32>(10)? != 0,
+                    is_read: row.get::<_, i32>(11)? != 0,
+                    is_deleted: row.get::<_, i32>(12)? != 0,
+                })
             })
-        }).map_err(|e| StorageError::Database(e.to_string()))?;
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
-        let mut messages: Vec<Message> = rows.collect::<Result<Vec<_>, _>>()
+        let mut messages: Vec<Message> = rows
+            .collect::<Result<Vec<_>, _>>()
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
         messages.reverse();
@@ -454,7 +490,8 @@ impl StorageRepository for SqliteStorage {
             "UPDATE messages SET is_deleted = 1, content_type = 'deleted', content_data = ''
              WHERE sender_uuid = ?1 AND timestamp = ?2",
             params![sender_uuid, timestamp],
-        ).map_err(|e| StorageError::Database(e.to_string()))?;
+        )
+        .map_err(|e| StorageError::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -470,16 +507,23 @@ impl StorageRepository for SqliteStorage {
                 reaction.emoji,
                 reaction.timestamp,
             ],
-        ).map_err(|e| StorageError::Database(e.to_string()))?;
+        )
+        .map_err(|e| StorageError::Database(e.to_string()))?;
         Ok(())
     }
 
-    fn remove_reaction(&self, message_id: &str, sender_uuid: &str, emoji: &str) -> Result<(), StorageError> {
+    fn remove_reaction(
+        &self,
+        message_id: &str,
+        sender_uuid: &str,
+        emoji: &str,
+    ) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "DELETE FROM reactions WHERE message_id = ?1 AND sender_uuid = ?2 AND emoji = ?3",
             params![message_id, sender_uuid, emoji],
-        ).map_err(|e| StorageError::Database(e.to_string()))?;
+        )
+        .map_err(|e| StorageError::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -489,15 +533,17 @@ impl StorageRepository for SqliteStorage {
             "SELECT id, message_id, sender_uuid, emoji, timestamp FROM reactions WHERE message_id = ?1"
         ).map_err(|e| StorageError::Database(e.to_string()))?;
 
-        let rows = stmt.query_map(params![message_id], |row| {
-            Ok(Reaction {
-                id: row.get(0)?,
-                message_id: row.get(1)?,
-                sender_uuid: row.get(2)?,
-                emoji: row.get(3)?,
-                timestamp: row.get(4)?,
+        let rows = stmt
+            .query_map(params![message_id], |row| {
+                Ok(Reaction {
+                    id: row.get(0)?,
+                    message_id: row.get(1)?,
+                    sender_uuid: row.get(2)?,
+                    emoji: row.get(3)?,
+                    timestamp: row.get(4)?,
+                })
             })
-        }).map_err(|e| StorageError::Database(e.to_string()))?;
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| StorageError::Database(e.to_string()))
@@ -516,8 +562,14 @@ impl StorageRepository for SqliteStorage {
         conn.execute(
             "INSERT OR REPLACE INTO delivery_status (message_id, recipient_uuid, state, updated_at)
              VALUES (?1, ?2, ?3, ?4)",
-            params![status.message_id, status.recipient_uuid, state_str, status.updated_at],
-        ).map_err(|e| StorageError::Database(e.to_string()))?;
+            params![
+                status.message_id,
+                status.recipient_uuid,
+                state_str,
+                status.updated_at
+            ],
+        )
+        .map_err(|e| StorageError::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -527,30 +579,36 @@ impl StorageRepository for SqliteStorage {
             "SELECT message_id, recipient_uuid, state, updated_at FROM delivery_status WHERE message_id = ?1"
         ).map_err(|e| StorageError::Database(e.to_string()))?;
 
-        let rows = stmt.query_map(params![message_id], |row| {
-            let state_str: String = row.get(2)?;
-            let state = match state_str.as_str() {
-                "sending" => DeliveryState::Sending,
-                "sent" => DeliveryState::Sent,
-                "delivered" => DeliveryState::Delivered,
-                "read" => DeliveryState::Read,
-                "failed" => DeliveryState::Failed,
-                _ => DeliveryState::Sending,
-            };
+        let rows = stmt
+            .query_map(params![message_id], |row| {
+                let state_str: String = row.get(2)?;
+                let state = match state_str.as_str() {
+                    "sending" => DeliveryState::Sending,
+                    "sent" => DeliveryState::Sent,
+                    "delivered" => DeliveryState::Delivered,
+                    "read" => DeliveryState::Read,
+                    "failed" => DeliveryState::Failed,
+                    _ => DeliveryState::Sending,
+                };
 
-            Ok(DeliveryStatus {
-                message_id: row.get(0)?,
-                recipient_uuid: row.get(1)?,
-                state,
-                updated_at: row.get(3)?,
+                Ok(DeliveryStatus {
+                    message_id: row.get(0)?,
+                    recipient_uuid: row.get(1)?,
+                    state,
+                    updated_at: row.get(3)?,
+                })
             })
-        }).map_err(|e| StorageError::Database(e.to_string()))?;
+            .map_err(|e| StorageError::Database(e.to_string()))?;
 
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| StorageError::Database(e.to_string()))
     }
 
-    fn mark_messages_read(&self, conversation_id: &str, up_to_timestamp: i64) -> Result<(), StorageError> {
+    fn mark_messages_read(
+        &self,
+        conversation_id: &str,
+        up_to_timestamp: i64,
+    ) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE messages SET is_read = 1 WHERE conversation_id = ?1 AND timestamp <= ?2 AND is_read = 0",

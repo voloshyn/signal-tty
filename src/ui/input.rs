@@ -1,12 +1,16 @@
 use crate::app::App;
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App, focused: bool) {
-    let border_color = if focused { Color::Cyan } else { Color::DarkGray };
+    let border_color = if focused {
+        Color::Cyan
+    } else {
+        Color::DarkGray
+    };
 
     let block = Block::default()
         .title(" Message ")
@@ -19,13 +23,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, focused: bool) {
     let text = &app.input.text;
     let cursor = app.input.cursor;
 
-    // Split text at cursor position for rendering
     let (before, after) = text.split_at(cursor.min(text.len()));
 
     let line = if focused {
-        // Show cursor as block character
         let cursor_char = after.chars().next().unwrap_or(' ');
-        let after_cursor = if after.is_empty() { "" } else { &after[cursor_char.len_utf8()..] };
+        let after_cursor = if after.is_empty() {
+            ""
+        } else {
+            &after[cursor_char.len_utf8()..]
+        };
 
         Line::from(vec![
             Span::raw(before),

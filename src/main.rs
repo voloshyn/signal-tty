@@ -10,7 +10,7 @@ use app::{App, SendTarget};
 use avatar::AvatarManager;
 use crossterm::ExecutableCommand;
 use crossterm::cursor;
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{self, DisableFocusChange, EnableFocusChange, Event, KeyCode};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use image_cache::ImageCache;
 use infrastructure::{SignalClient, SignalRepository};
@@ -81,6 +81,7 @@ async fn main() -> anyhow::Result<()> {
     terminal::enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     stdout().execute(cursor::Hide)?;
+    stdout().execute(EnableFocusChange)?;
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
@@ -132,15 +133,20 @@ async fn main() -> anyhow::Result<()> {
                 Event::Resize(_, _) => {
                     needs_redraw = true;
                 }
+                Event::FocusGained => {
+                    if let Some(ref mut mgr) = avatar_manager {
+                        mgr.clear_cache();
+                    }
+                    needs_redraw = true;
+                }
                 _ => {}
             }
         }
 
-        // Process one pending loaded image per iteration (non-blocking)
-        if let Some(ref mut cache) = image_cache {
-            if cache.process_next_loaded_image() {
-                needs_redraw = true;
-            }
+        if let Some(ref mut cache) = image_cache
+            && cache.process_next_loaded_image()
+        {
+            needs_redraw = true;
         }
 
         // Check for incoming Signal messages
@@ -209,6 +215,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     stdout().execute(cursor::Show)?;
+    stdout().execute(DisableFocusChange)?;
     terminal::disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
     app.signal.disconnect().await?;

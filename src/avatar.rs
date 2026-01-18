@@ -53,16 +53,16 @@ impl AvatarManager {
         recipient_uuid: Option<&str>,
         recipient_number: Option<&str>,
     ) -> Option<&mut StatefulProtocol> {
-        if let Some(number) = recipient_number {
-            if self.has_avatar_file(number) {
-                return self.get_avatar(number);
-            }
+        if let Some(number) = recipient_number
+            && self.has_avatar_file(number)
+        {
+            return self.get_avatar(number);
         }
 
-        if let Some(uuid) = recipient_uuid {
-            if self.has_avatar_file(uuid) {
-                return self.get_avatar(uuid);
-            }
+        if let Some(uuid) = recipient_uuid
+            && self.has_avatar_file(uuid)
+        {
+            return self.get_avatar(uuid);
         }
 
         None
@@ -74,22 +74,8 @@ impl AvatarManager {
         profile.exists() || contact.exists()
     }
 
-    pub fn has_avatar_file_for_conversation(
-        &self,
-        recipient_uuid: Option<&str>,
-        recipient_number: Option<&str>,
-    ) -> bool {
-        if let Some(number) = recipient_number
-            && self.has_avatar_file(number)
-        {
-            return true;
-        }
-        if let Some(uuid) = recipient_uuid
-            && self.has_avatar_file(uuid)
-        {
-            return true;
-        }
-        false
+    pub fn clear_cache(&mut self) {
+        self.cache.clear();
     }
 }
 

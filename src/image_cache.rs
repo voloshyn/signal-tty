@@ -85,18 +85,15 @@ impl ImageCache {
 
     pub fn process_next_loaded_image(&mut self) -> bool {
         if let Ok(result) = self.result_receiver.try_recv() {
-            match result {
-                Some(processed) => {
-                    self.cache.insert(
-                        processed.path,
-                        CacheEntry::Loaded(CachedImage {
-                            protocol: processed.protocol,
-                            render_width: processed.render_width,
-                            render_height: processed.render_height,
-                        }),
-                    );
-                }
-                None => {}
+            if let Some(processed) = result {
+                self.cache.insert(
+                    processed.path,
+                    CacheEntry::Loaded(CachedImage {
+                        protocol: processed.protocol,
+                        render_width: processed.render_width,
+                        render_height: processed.render_height,
+                    }),
+                );
             }
             return true;
         }

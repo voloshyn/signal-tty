@@ -22,7 +22,11 @@ pub struct Conversation {
 }
 
 impl Conversation {
-    pub fn new_direct(recipient_uuid: String, recipient_number: Option<String>, recipient_name: Option<String>) -> Self {
+    pub fn new_direct(
+        recipient_uuid: String,
+        recipient_number: Option<String>,
+        recipient_name: Option<String>,
+    ) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             conversation_type: ConversationType::Direct,
@@ -56,29 +60,16 @@ impl Conversation {
 
     pub fn display_name(&self) -> String {
         match self.conversation_type {
-            ConversationType::Direct => {
-                self.recipient_name.clone()
-                    .or_else(|| self.recipient_number.clone())
-                    .or_else(|| self.recipient_uuid.clone())
-                    .unwrap_or_else(|| "Unknown".to_string())
-            }
-            ConversationType::Group => {
-                self.group_name.clone()
-                    .unwrap_or_else(|| "Unknown Group".to_string())
-            }
-        }
-    }
-
-    pub fn identifier(&self) -> String {
-        match self.conversation_type {
-            ConversationType::Direct => {
-                self.recipient_uuid.clone()
-                    .or_else(|| self.recipient_number.clone())
-                    .unwrap_or_default()
-            }
-            ConversationType::Group => {
-                self.group_id.clone().unwrap_or_default()
-            }
+            ConversationType::Direct => self
+                .recipient_name
+                .clone()
+                .or_else(|| self.recipient_number.clone())
+                .or_else(|| self.recipient_uuid.clone())
+                .unwrap_or_else(|| "Unknown".to_string()),
+            ConversationType::Group => self
+                .group_name
+                .clone()
+                .unwrap_or_else(|| "Unknown Group".to_string()),
         }
     }
 }
