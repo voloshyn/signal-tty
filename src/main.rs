@@ -134,9 +134,7 @@ async fn main() -> anyhow::Result<()> {
                     needs_redraw = true;
                 }
                 Event::FocusGained => {
-                    if let Some(ref mut mgr) = avatar_manager {
-                        mgr.clear_cache();
-                    }
+                    terminal.clear()?;
                     needs_redraw = true;
                 }
                 _ => {}

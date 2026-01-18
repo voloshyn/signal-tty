@@ -74,9 +74,6 @@ impl AvatarManager {
         profile.exists() || contact.exists()
     }
 
-    pub fn clear_cache(&mut self) {
-        self.cache.clear();
-    }
 }
 
 fn dirs_avatar_path() -> Option<PathBuf> {
