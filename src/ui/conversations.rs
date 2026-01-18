@@ -74,13 +74,13 @@ pub fn render(
                 Style::default().fg(Color::White)
             };
 
-            let unread_indicator = if has_unread(conv_view) { "● " } else { "  " };
+            let unread_indicator = if has_unread(conv_view) { " ●" } else { "" };
 
             ListItem::new(vec![
                 Line::from(vec![
-                    Span::styled(unread_indicator, Style::default().fg(Color::Green)),
                     Span::styled(prefix, Style::default().fg(Color::DarkGray)),
                     Span::styled(name, style),
+                    Span::styled(unread_indicator, Style::default().fg(Color::Green)),
                 ]),
                 Line::default(),
             ])

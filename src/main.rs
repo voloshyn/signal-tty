@@ -75,6 +75,10 @@ async fn main() -> anyhow::Result<()> {
     let mut app = App::new(storage, signal, my_number);
     app.load_conversations();
 
+    if let Some((recipient, timestamps)) = app.mark_current_conversation_read() {
+        let _ = app.signal.send_read_receipt(&recipient, timestamps).await;
+    }
+
     let mut avatar_manager = AvatarManager::new();
     let mut image_cache = ImageCache::new();
 
@@ -128,6 +132,11 @@ async fn main() -> anyhow::Result<()> {
                             cache.preload_images(&paths, 60);
                         }
                     }
+
+                    if let Some((recipient, timestamps)) = app.mark_current_conversation_read() {
+                        let _ = app.signal.send_read_receipt(&recipient, timestamps).await;
+                    }
+
                     needs_redraw = true;
                 }
                 Event::Resize(_, _) => {
@@ -151,6 +160,9 @@ async fn main() -> anyhow::Result<()> {
         match tokio::time::timeout(Duration::from_millis(20), messages.recv()).await {
             Ok(Ok(msg)) => {
                 app.handle_incoming_message(msg);
+                if let Some((recipient, timestamps)) = app.mark_current_conversation_read() {
+                    let _ = app.signal.send_read_receipt(&recipient, timestamps).await;
+                }
                 needs_redraw = true;
             }
             Ok(Err(_)) => {

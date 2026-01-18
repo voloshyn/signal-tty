@@ -59,16 +59,13 @@ impl Conversation {
     }
 
     pub fn display_name(&self) -> String {
+        let non_empty = |s: &Option<String>| s.as_ref().filter(|s| !s.is_empty()).cloned();
         match self.conversation_type {
-            ConversationType::Direct => self
-                .recipient_name
-                .clone()
-                .or_else(|| self.recipient_number.clone())
-                .or_else(|| self.recipient_uuid.clone())
+            ConversationType::Direct => non_empty(&self.recipient_name)
+                .or_else(|| non_empty(&self.recipient_number))
+                .or_else(|| non_empty(&self.recipient_uuid))
                 .unwrap_or_else(|| "Unknown".to_string()),
-            ConversationType::Group => self
-                .group_name
-                .clone()
+            ConversationType::Group => non_empty(&self.group_name)
                 .unwrap_or_else(|| "Unknown Group".to_string()),
         }
     }

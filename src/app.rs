@@ -194,6 +194,15 @@ impl ConversationView {
         self.scroll_offset = 0;
     }
 
+    pub fn unread_incoming_timestamps(&self) -> Vec<i64> {
+        self.messages.as_ref().map_or(Vec::new(), |msgs| {
+            msgs.iter()
+                .filter(|m| !m.is_read && !m.is_outgoing)
+                .map(|m| m.timestamp)
+                .collect()
+        })
+    }
+
     pub fn add_message(&mut self, message: Message) {
         if let Some(ref mut msgs) = self.messages {
             msgs.push(message);
@@ -365,6 +374,42 @@ impl App {
                 Some(SendTarget::Group(group_id))
             }
         }
+    }
+
+    pub fn mark_current_conversation_read(&mut self) -> Option<(String, Vec<i64>)> {
+        let conv = self.selected_conversation()?;
+        if conv.conversation.conversation_type != ConversationType::Direct {
+            return None;
+        }
+
+        let timestamps = conv.unread_incoming_timestamps();
+        if timestamps.is_empty() {
+            return None;
+        }
+
+        let conversation_id = conv.conversation.id.clone();
+        let recipient = conv
+            .conversation
+            .recipient_uuid
+            .clone()
+            .or_else(|| conv.conversation.recipient_number.clone())?;
+
+        let max_timestamp = *timestamps.iter().max()?;
+        let _ = self
+            .storage
+            .mark_messages_read(&conversation_id, max_timestamp);
+
+        if let Some(conv) = self.selected_conversation_mut() {
+            if let Some(ref mut msgs) = conv.messages {
+                for msg in msgs.iter_mut() {
+                    if !msg.is_outgoing && timestamps.contains(&msg.timestamp) {
+                        msg.is_read = true;
+                    }
+                }
+            }
+        }
+
+        Some((recipient, timestamps))
     }
 
     pub fn handle_incoming_message(&mut self, msg: IncomingMessage) {
