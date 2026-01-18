@@ -247,7 +247,11 @@ impl App {
 
     pub fn load_conversations(&mut self) {
         if let Ok(convs) = self.storage.list_conversations() {
-            self.conversations = convs.into_iter().map(ConversationView::new).collect();
+            self.conversations = convs
+                .into_iter()
+                .filter(|c| c.last_message_timestamp.is_some())
+                .map(ConversationView::new)
+                .collect();
             if !self.conversations.is_empty() {
                 self.selected = 0;
                 if self.conversations[0].load_messages(&self.storage) {
@@ -445,6 +449,17 @@ impl App {
                 return;
             }
 
+            let sync_timestamp = sent.timestamp.unwrap_or(timestamp);
+            if self
+                .storage
+                .get_message_by_signal_id(sender_uuid, sync_timestamp)
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                return;
+            }
+
             let group_info = sent.group_info.as_ref();
 
             let conversation = if let Some(group) = group_info {
@@ -509,15 +524,38 @@ impl App {
             .position(|c| c.conversation.id == conversation_id);
 
         if let Some(idx) = found_idx {
+            let timestamp = message.timestamp;
             let conv_view = &mut self.conversations[idx];
             if conv_view.messages.is_none() {
                 conv_view.load_messages(&self.storage);
             }
             conv_view.add_message(message);
+            conv_view.conversation.last_message_timestamp = Some(timestamp);
+
+            self.sort_conversations();
             return;
         }
 
         self.load_conversations();
+    }
+
+    fn sort_conversations(&mut self) {
+        let selected_id = self
+            .conversations
+            .get(self.selected)
+            .map(|c| c.conversation.id.clone());
+
+        self.conversations.sort_by(|a, b| {
+            b.conversation
+                .last_message_timestamp
+                .cmp(&a.conversation.last_message_timestamp)
+        });
+
+        if let Some(id) = selected_id {
+            if let Some(new_idx) = self.conversations.iter().position(|c| c.conversation.id == id) {
+                self.selected = new_idx;
+            }
+        }
     }
 }
 

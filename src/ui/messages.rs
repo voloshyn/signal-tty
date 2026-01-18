@@ -13,6 +13,8 @@ const DEFAULT_IMAGE_HEIGHT: u16 = 8;
 fn calculate_message_height(
     msg: &crate::storage::Message,
     image_cache: &Option<ImageCache>,
+    width: u16,
+    sender_prefix_len: usize,
 ) -> u16 {
     match &msg.content {
         MessageContent::Attachment { attachments } => {
@@ -31,8 +33,31 @@ fn calculate_message_height(
             }
             h.max(1)
         }
-        _ => 1,
+        _ => {
+            let text = match &msg.content {
+                MessageContent::Text { body } => body.as_str(),
+                MessageContent::Sticker { .. } => "[Sticker]",
+                MessageContent::RemoteDeleted => "[Message deleted]",
+                MessageContent::Attachment { .. } => "",
+            };
+            let total_len = sender_prefix_len + text.len();
+            if width == 0 {
+                1
+            } else {
+                ((total_len as u16 + width - 1) / width).max(1)
+            }
+        }
     }
+}
+
+fn get_sender_prefix_len(msg: &crate::storage::Message) -> usize {
+    let timestamp_len = 8;
+    let sender = if msg.is_outgoing {
+        "You"
+    } else {
+        msg.sender_name.as_deref().unwrap_or("Unknown")
+    };
+    timestamp_len + sender.len() + 4
 }
 
 pub fn render(
@@ -91,7 +116,9 @@ pub fn render(
 
     let mut total_content_height = 0usize;
     for msg in messages.iter() {
-        total_content_height += calculate_message_height(msg, image_cache) as usize;
+        let prefix_len = get_sender_prefix_len(msg);
+        total_content_height +=
+            calculate_message_height(msg, image_cache, inner_area.width, prefix_len) as usize;
     }
 
     let max_scroll = total_content_height.saturating_sub(visible_height);
@@ -108,7 +135,9 @@ pub fn render(
     let mut skip_lines_at_start = 0usize;
 
     for (i, msg) in messages.iter().enumerate() {
-        let msg_height = calculate_message_height(msg, image_cache) as usize;
+        let prefix_len = get_sender_prefix_len(msg);
+        let msg_height =
+            calculate_message_height(msg, image_cache, inner_area.width, prefix_len) as usize;
         if cumulative_height + msg_height > target_top {
             start_idx = i;
             skip_lines_at_start = target_top.saturating_sub(cumulative_height);
@@ -225,6 +254,12 @@ pub fn render(
                     MessageContent::Attachment { .. } => unreachable!(),
                 };
 
+                let prefix = format!("[{}] {}: ", timestamp, sender);
+                let prefix_len = prefix.len();
+                let msg_height =
+                    calculate_message_height(msg, image_cache, inner_area.width, prefix_len)
+                        as i16;
+
                 let line = Line::from(vec![
                     Span::styled(
                         format!("[{}] ", timestamp),
@@ -234,16 +269,23 @@ pub fn render(
                     Span::raw(text),
                 ]);
 
-                if y_offset >= 0 && y_offset < inner_area.height as i16 {
+                let render_start = y_offset.max(0) as u16;
+                let render_end =
+                    (y_offset + msg_height).min(inner_area.height as i16) as u16;
+
+                if render_end > render_start {
                     let msg_rect = Rect {
                         x: inner_area.x,
-                        y: inner_area.y + y_offset as u16,
+                        y: inner_area.y + render_start,
                         width: inner_area.width,
-                        height: 1,
+                        height: render_end - render_start,
                     };
-                    frame.render_widget(Paragraph::new(line), msg_rect);
+                    frame.render_widget(
+                        Paragraph::new(line).wrap(ratatui::widgets::Wrap { trim: false }),
+                        msg_rect,
+                    );
                 }
-                y_offset += 1;
+                y_offset += msg_height;
             }
         }
     }

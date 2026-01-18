@@ -15,9 +15,17 @@ pub fn render(frame: &mut Frame, app: &mut App, avatar_manager: &mut Option<Avat
     ])
     .areas(frame.area());
 
+    let input_width = right.width.saturating_sub(2) as usize;
+    let input_lines = if input_width > 0 {
+        ((app.input.text.len() + input_width) / input_width).max(1)
+    } else {
+        1
+    };
+    let input_height = (input_lines as u16 + 2).min(right.height / 2);
+
     let [messages_area, input_area] = Layout::vertical([
         Constraint::Min(3),
-        Constraint::Length(3),
+        Constraint::Length(input_height),
     ])
     .areas(right);
 

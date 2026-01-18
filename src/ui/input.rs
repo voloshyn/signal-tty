@@ -52,6 +52,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, focused: bool) {
         }
     };
 
-    let paragraph = Paragraph::new(line);
+    let paragraph = Paragraph::new(line).wrap(ratatui::widgets::Wrap { trim: false });
     frame.render_widget(paragraph, inner_area);
 }
