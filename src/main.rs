@@ -102,25 +102,11 @@ async fn main() -> anyhow::Result<()> {
         if event::poll(Duration::from_millis(20))? {
             match event::read()? {
                 Event::Key(key) => {
-                    // For scroll keys, drain any additional pending scroll events to prevent buffering
-                    let is_scroll_key = matches!(
-                        key.code,
-                        KeyCode::Up
-                            | KeyCode::Down
-                            | KeyCode::Char('j')
-                            | KeyCode::Char('k')
-                            | KeyCode::PageUp
-                            | KeyCode::PageDown
-                    );
-
                     events::handle_key_event(&mut app, key);
 
-                    if is_scroll_key {
-                        // Drain buffered scroll events (process them but skip redundant renders)
-                        while event::poll(Duration::from_millis(0))? {
-                            if let Event::Key(next_key) = event::read()? {
-                                events::handle_key_event(&mut app, next_key);
-                            }
+                    while event::poll(Duration::from_millis(0))? {
+                        if let Event::Key(next_key) = event::read()? {
+                            events::handle_key_event(&mut app, next_key);
                         }
                     }
 
