@@ -86,6 +86,8 @@ pub struct Envelope {
     pub receipt_message: Option<ReceiptMessage>,
     #[serde(default)]
     pub typing_message: Option<TypingMessage>,
+    #[serde(default)]
+    pub edit_message: Option<EditMessage>,
 }
 
 impl Envelope {
@@ -114,6 +116,14 @@ pub struct DataMessage {
     pub quote: Option<Quote>,
     #[serde(default)]
     pub reaction: Option<Reaction>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditMessage {
+    pub target_sent_timestamp: i64,
+    #[serde(default)]
+    pub data_message: Option<DataMessage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,6 +183,8 @@ pub struct SentMessage {
     pub group_info: Option<GroupInfo>,
     #[serde(default)]
     pub attachments: Vec<Attachment>,
+    #[serde(default)]
+    pub edit_message: Option<EditMessage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

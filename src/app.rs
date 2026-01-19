@@ -478,6 +478,7 @@ impl App {
                     is_outgoing,
                     is_read: is_outgoing,
                     is_deleted: false,
+                    is_edited: false,
                 };
 
                 let _ = self.storage.save_message(&message);
@@ -485,9 +486,18 @@ impl App {
             }
         }
 
+        if let Some(edit) = &envelope.edit_message {
+            self.handle_edit_message(sender_uuid, edit);
+        }
+
         if let Some(sync) = &envelope.sync_message
             && let Some(sent) = &sync.sent_message
         {
+            if let Some(edit) = &sent.edit_message {
+                self.handle_edit_message(sender_uuid, edit);
+                return;
+            }
+
             let text = sent.message.clone().unwrap_or_default();
             if text.is_empty() && sent.attachments.is_empty() {
                 return;
@@ -553,10 +563,49 @@ impl App {
                     is_outgoing: true,
                     is_read: true,
                     is_deleted: false,
+                    is_edited: false,
                 };
 
                 let _ = self.storage.save_message(&message);
                 self.add_message_to_conversation(&conv.id, message);
+            }
+        }
+    }
+
+    fn handle_edit_message(
+        &mut self,
+        sender_uuid: &str,
+        edit: &crate::infrastructure::EditMessage,
+    ) {
+        let target_timestamp = edit.target_sent_timestamp;
+
+        let Some(data) = &edit.data_message else {
+            return;
+        };
+        let new_text = data.message.clone().unwrap_or_default();
+        if new_text.is_empty() {
+            return;
+        }
+
+        let new_content = MessageContent::Text { body: new_text };
+        let _ = self
+            .storage
+            .update_message_content(sender_uuid, target_timestamp, &new_content);
+        let _ = self
+            .storage
+            .update_message_content("", target_timestamp, &new_content);
+
+        for conv in &mut self.conversations {
+            if let Some(ref mut msgs) = conv.messages {
+                for msg in msgs.iter_mut() {
+                    if msg.timestamp == target_timestamp
+                        && (msg.sender_uuid == sender_uuid || msg.sender_uuid.is_empty())
+                    {
+                        msg.content = new_content.clone();
+                        msg.is_edited = true;
+                        return;
+                    }
+                }
             }
         }
     }

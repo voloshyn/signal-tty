@@ -109,6 +109,7 @@ pub struct Message {
     pub is_outgoing: bool,
     pub is_read: bool,
     pub is_deleted: bool,
+    pub is_edited: bool,
 }
 
 impl Message {

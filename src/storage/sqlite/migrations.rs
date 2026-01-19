@@ -77,6 +77,11 @@ const MIGRATIONS: &[&str] = &[
 
     INSERT INTO schema_version (version) VALUES (1);
     "#,
+    // Migration 2: Add is_edited column to messages
+    r#"
+    ALTER TABLE messages ADD COLUMN is_edited INTEGER NOT NULL DEFAULT 0;
+    UPDATE schema_version SET version = 2;
+    "#,
 ];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), StorageError> {

@@ -190,6 +190,7 @@ async fn main() -> anyhow::Result<()> {
                                 is_outgoing: true,
                                 is_read: true,
                                 is_deleted: false,
+                                is_edited: false,
                             };
                             let _ = app.storage.save_message(&message);
                             app.add_message_to_conversation(&conv_id, message);

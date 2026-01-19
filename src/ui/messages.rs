@@ -254,6 +254,8 @@ pub fn render(
                     MessageContent::Attachment { .. } => unreachable!(),
                 };
 
+                let edited_suffix = if msg.is_edited { " (edited)" } else { "" };
+
                 let prefix = format!("[{}] {}: ", timestamp, sender);
                 let prefix_len = prefix.len();
                 let msg_height =
@@ -267,6 +269,7 @@ pub fn render(
                     ),
                     Span::styled(format!("{}: ", sender), sender_style),
                     Span::raw(text),
+                    Span::styled(edited_suffix, Style::default().fg(Color::DarkGray)),
                 ]);
 
                 let render_start = y_offset.max(0) as u16;

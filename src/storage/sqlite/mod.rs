@@ -319,8 +319,8 @@ impl StorageRepository for SqliteStorage {
         conn.execute(
             "INSERT OR REPLACE INTO messages
              (id, conversation_id, sender_uuid, sender_name, timestamp, server_timestamp, received_at,
-              content_type, content_data, quote_json, is_outgoing, is_read, is_deleted)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+              content_type, content_data, quote_json, is_outgoing, is_read, is_deleted, is_edited)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 message.id,
                 message.conversation_id,
@@ -335,6 +335,7 @@ impl StorageRepository for SqliteStorage {
                 message.is_outgoing as i32,
                 message.is_read as i32,
                 message.is_deleted as i32,
+                message.is_edited as i32,
             ],
         ).map_err(|e| StorageError::Database(e.to_string()))?;
 
@@ -351,7 +352,7 @@ impl StorageRepository for SqliteStorage {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
             "SELECT id, conversation_id, sender_uuid, sender_name, timestamp, server_timestamp, received_at,
-                    content_type, content_data, quote_json, is_outgoing, is_read, is_deleted
+                    content_type, content_data, quote_json, is_outgoing, is_read, is_deleted, is_edited
              FROM messages WHERE id = ?1",
             params![id],
             |row| {
@@ -372,6 +373,7 @@ impl StorageRepository for SqliteStorage {
                     is_outgoing: row.get::<_, i32>(10)? != 0,
                     is_read: row.get::<_, i32>(11)? != 0,
                     is_deleted: row.get::<_, i32>(12)? != 0,
+                    is_edited: row.get::<_, i32>(13)? != 0,
                 })
             },
         ).optional().map_err(|e| StorageError::Database(e.to_string()))
@@ -385,7 +387,7 @@ impl StorageRepository for SqliteStorage {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
             "SELECT id, conversation_id, sender_uuid, sender_name, timestamp, server_timestamp, received_at,
-                    content_type, content_data, quote_json, is_outgoing, is_read, is_deleted
+                    content_type, content_data, quote_json, is_outgoing, is_read, is_deleted, is_edited
              FROM messages WHERE sender_uuid = ?1 AND timestamp = ?2",
             params![sender_uuid, timestamp],
             |row| {
@@ -406,6 +408,7 @@ impl StorageRepository for SqliteStorage {
                     is_outgoing: row.get::<_, i32>(10)? != 0,
                     is_read: row.get::<_, i32>(11)? != 0,
                     is_deleted: row.get::<_, i32>(12)? != 0,
+                    is_edited: row.get::<_, i32>(13)? != 0,
                 })
             },
         ).optional().map_err(|e| StorageError::Database(e.to_string()))
@@ -424,7 +427,7 @@ impl StorageRepository for SqliteStorage {
         {
             (
                 "SELECT id, conversation_id, sender_uuid, sender_name, timestamp, server_timestamp, received_at,
-                        content_type, content_data, quote_json, is_outgoing, is_read, is_deleted
+                        content_type, content_data, quote_json, is_outgoing, is_read, is_deleted, is_edited
                  FROM messages WHERE conversation_id = ?1 AND timestamp < ?2
                  ORDER BY timestamp DESC LIMIT ?3",
                 vec![Box::new(conversation_id.to_string()), Box::new(ts), Box::new(limit)]
@@ -432,7 +435,7 @@ impl StorageRepository for SqliteStorage {
         } else {
             (
                 "SELECT id, conversation_id, sender_uuid, sender_name, timestamp, server_timestamp, received_at,
-                        content_type, content_data, quote_json, is_outgoing, is_read, is_deleted
+                        content_type, content_data, quote_json, is_outgoing, is_read, is_deleted, is_edited
                  FROM messages WHERE conversation_id = ?1
                  ORDER BY timestamp DESC LIMIT ?2",
                 vec![Box::new(conversation_id.to_string()), Box::new(limit)]
@@ -465,6 +468,7 @@ impl StorageRepository for SqliteStorage {
                     is_outgoing: row.get::<_, i32>(10)? != 0,
                     is_read: row.get::<_, i32>(11)? != 0,
                     is_deleted: row.get::<_, i32>(12)? != 0,
+                    is_edited: row.get::<_, i32>(13)? != 0,
                 })
             })
             .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -490,6 +494,23 @@ impl StorageRepository for SqliteStorage {
             "UPDATE messages SET is_deleted = 1, content_type = 'deleted', content_data = ''
              WHERE sender_uuid = ?1 AND timestamp = ?2",
             params![sender_uuid, timestamp],
+        )
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn update_message_content(
+        &self,
+        sender_uuid: &str,
+        timestamp: i64,
+        new_content: &MessageContent,
+    ) -> Result<(), StorageError> {
+        let (content_type, content_data) = Self::message_content_to_parts(new_content);
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE messages SET content_type = ?3, content_data = ?4, is_edited = 1
+             WHERE sender_uuid = ?1 AND timestamp = ?2",
+            params![sender_uuid, timestamp, content_type, content_data],
         )
         .map_err(|e| StorageError::Database(e.to_string()))?;
         Ok(())

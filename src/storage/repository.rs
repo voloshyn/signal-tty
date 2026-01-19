@@ -64,6 +64,13 @@ pub trait StorageRepository: Send + Sync {
 
     fn mark_message_deleted(&self, sender_uuid: &str, timestamp: i64) -> Result<(), StorageError>;
 
+    fn update_message_content(
+        &self,
+        sender_uuid: &str,
+        timestamp: i64,
+        new_content: &MessageContent,
+    ) -> Result<(), StorageError>;
+
     fn save_reaction(&self, reaction: &Reaction) -> Result<(), StorageError>;
 
     fn remove_reaction(
