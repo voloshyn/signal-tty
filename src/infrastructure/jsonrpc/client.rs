@@ -157,12 +157,3 @@ impl<T: Transport + 'static> RpcClient for JsonRpcClient<T> {
         self.notification_sender.subscribe()
     }
 }
-
-#[derive(Debug, Clone, Serialize)]
-pub struct NoParams;
-
-impl Default for NoParams {
-    fn default() -> Self {
-        Self
-    }
-}

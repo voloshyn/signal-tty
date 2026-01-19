@@ -22,6 +22,8 @@ Signal-TTY is a terminal messaging client for Signal, built with Rust. It commun
 
 **App State** (`src/app.rs`): Central state with conversations, selection index, focus mode (Conversations/Messages/Input), and input buffer. `ConversationView` wraps conversations with runtime state (loaded messages, scroll offset).
 
+**Events** (`src/events/`): Key event routing dispatches to different handlers based on current focus mode.
+
 **Infrastructure** (`src/infrastructure/`):
 - `signal/client.rs` - Wraps JSON-RPC, manages send/receive, spawns notification handler
 - `jsonrpc/client.rs` - RPC with request/response matching via UUID

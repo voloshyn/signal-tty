@@ -10,7 +10,7 @@ use app::{App, SendTarget};
 use avatar::AvatarManager;
 use crossterm::ExecutableCommand;
 use crossterm::cursor;
-use crossterm::event::{self, DisableFocusChange, EnableFocusChange, Event, KeyCode};
+use crossterm::event::{self, DisableFocusChange, EnableFocusChange, Event};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use image_cache::ImageCache;
 use infrastructure::{SignalClient, SignalRepository};
@@ -109,8 +109,6 @@ async fn main() -> anyhow::Result<()> {
                             events::handle_key_event(&mut app, next_key);
                         }
                     }
-
-                    // Preload any newly discovered images
                     if let Some(ref mut cache) = image_cache {
                         let paths = app.take_preload_paths();
                         if !paths.is_empty() {

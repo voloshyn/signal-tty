@@ -114,14 +114,13 @@ impl ConversationView {
         false
     }
 
-    /// Collect all image attachment paths from messages (newest first, matching storage order)
     pub fn collect_image_paths(&self) -> Vec<String> {
         let Some(ref msgs) = self.messages else {
             return Vec::new();
         };
 
         let mut paths = Vec::new();
-        for msg in msgs.iter() {
+        for msg in msgs.iter().rev() {
             if let MessageContent::Attachment { attachments } = &msg.content {
                 for att in attachments {
                     if att
