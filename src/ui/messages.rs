@@ -41,11 +41,7 @@ fn calculate_message_height(
                 MessageContent::Attachment { .. } => "",
             };
             let total_len = sender_prefix_len + text.len();
-            if width == 0 {
-                1
-            } else {
-                ((total_len as u16 + width - 1) / width).max(1)
-            }
+            (total_len as u16).div_ceil(width.max(1)).max(1)
         }
     }
 }
@@ -259,8 +255,7 @@ pub fn render(
                 let prefix = format!("[{}] {}: ", timestamp, sender);
                 let prefix_len = prefix.len();
                 let msg_height =
-                    calculate_message_height(msg, image_cache, inner_area.width, prefix_len)
-                        as i16;
+                    calculate_message_height(msg, image_cache, inner_area.width, prefix_len) as i16;
 
                 let line = Line::from(vec![
                     Span::styled(
@@ -273,8 +268,7 @@ pub fn render(
                 ]);
 
                 let render_start = y_offset.max(0) as u16;
-                let render_end =
-                    (y_offset + msg_height).min(inner_area.height as i16) as u16;
+                let render_end = (y_offset + msg_height).min(inner_area.height as i16) as u16;
 
                 if render_end > render_start {
                     let msg_rect = Rect {
