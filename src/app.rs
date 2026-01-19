@@ -398,12 +398,12 @@ impl App {
             .storage
             .mark_messages_read(&conversation_id, max_timestamp);
 
-        if let Some(conv) = self.selected_conversation_mut() {
-            if let Some(ref mut msgs) = conv.messages {
-                for msg in msgs.iter_mut() {
-                    if !msg.is_outgoing && timestamps.contains(&msg.timestamp) {
-                        msg.is_read = true;
-                    }
+        if let Some(conv) = self.selected_conversation_mut()
+            && let Some(ref mut msgs) = conv.messages
+        {
+            for msg in msgs.iter_mut() {
+                if !msg.is_outgoing && timestamps.contains(&msg.timestamp) {
+                    msg.is_read = true;
                 }
             }
         }
@@ -595,10 +595,13 @@ impl App {
                 .cmp(&a.conversation.last_message_timestamp)
         });
 
-        if let Some(id) = selected_id {
-            if let Some(new_idx) = self.conversations.iter().position(|c| c.conversation.id == id) {
-                self.selected = new_idx;
-            }
+        if let Some(id) = selected_id
+            && let Some(new_idx) = self
+                .conversations
+                .iter()
+                .position(|c| c.conversation.id == id)
+        {
+            self.selected = new_idx;
         }
     }
 }

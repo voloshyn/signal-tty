@@ -57,13 +57,13 @@ impl SignalClient {
     }
 
     fn parse_notification(notification: JsonRpcNotification) -> Option<IncomingMessage> {
-        if notification.method == "receive" {
-            if let Some(params) = notification.params {
-                match serde_json::from_value::<IncomingMessage>(params) {
-                    Ok(msg) => return Some(msg),
-                    Err(e) => {
-                        error!("Failed to parse incoming message: {}", e);
-                    }
+        if notification.method == "receive"
+            && let Some(params) = notification.params
+        {
+            match serde_json::from_value::<IncomingMessage>(params) {
+                Ok(msg) => return Some(msg),
+                Err(e) => {
+                    error!("Failed to parse incoming message: {}", e);
                 }
             }
         }
