@@ -83,7 +83,7 @@ pub fn render(
     app.messages_height = inner_area.height as usize;
     frame.render_widget(block, area);
 
-    let (messages, mut scroll_offset) = {
+    let (messages, mut scroll_offset, selection_range, sel_cursor) = {
         let Some(conv_view) = app.selected_conversation() else {
             let empty = Paragraph::new("No conversation selected")
                 .style(Style::default().fg(Color::DarkGray));
@@ -104,20 +104,43 @@ pub fn render(
             return;
         }
 
-        (msgs.clone(), conv_view.scroll_offset)
+        let sel_range = conv_view.selection.as_ref().map(|s| s.range());
+        let sel_cursor = conv_view.selection.as_ref().map(|s| s.cursor);
+        (msgs.clone(), conv_view.scroll_offset, sel_range, sel_cursor)
     };
 
     let visible_height = inner_area.height as usize;
     let max_img_width = inner_area.width.saturating_sub(4);
 
+    let mut msg_heights: Vec<usize> = Vec::with_capacity(messages.len());
     let mut total_content_height = 0usize;
     for msg in messages.iter() {
         let prefix_len = get_sender_prefix_len(msg);
-        total_content_height +=
-            calculate_message_height(msg, image_cache, inner_area.width, prefix_len) as usize;
+        let h = calculate_message_height(msg, image_cache, inner_area.width, prefix_len) as usize;
+        msg_heights.push(h);
+        total_content_height += h;
     }
 
     let max_scroll = total_content_height.saturating_sub(visible_height);
+
+    if let Some(cursor_idx) = sel_cursor {
+        let mut cursor_top = 0usize;
+        for h in msg_heights.iter().take(cursor_idx) {
+            cursor_top += h;
+        }
+        let cursor_height = msg_heights.get(cursor_idx).copied().unwrap_or(1);
+        let cursor_bottom = cursor_top + cursor_height;
+
+        let view_bottom = total_content_height.saturating_sub(scroll_offset);
+        let view_top = view_bottom.saturating_sub(visible_height);
+
+        if cursor_top < view_top {
+            scroll_offset = total_content_height.saturating_sub(cursor_top + visible_height);
+        } else if cursor_bottom > view_bottom {
+            scroll_offset = total_content_height.saturating_sub(cursor_bottom);
+        }
+    }
+
     scroll_offset = scroll_offset.min(max_scroll);
     if let Some(conv) = app.selected_conversation_mut() {
         conv.scroll_offset = scroll_offset;
@@ -143,10 +166,19 @@ pub fn render(
     }
 
     let mut y_offset: i16 = -(skip_lines_at_start as i16);
-    for msg in messages.iter().skip(start_idx) {
+    for (msg_idx, msg) in messages.iter().enumerate().skip(start_idx) {
         if y_offset >= inner_area.height as i16 {
             break;
         }
+
+        let is_selected = selection_range
+            .as_ref()
+            .is_some_and(|r| r.contains(&msg_idx));
+        let bg_style = if is_selected {
+            Style::default().bg(Color::DarkGray)
+        } else {
+            Style::default()
+        };
 
         let sender = if msg.is_outgoing {
             "You"
@@ -158,10 +190,12 @@ pub fn render(
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
+                .bg(bg_style.bg.unwrap_or(Color::Reset))
         } else {
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD)
+                .bg(bg_style.bg.unwrap_or(Color::Reset))
         };
 
         match &msg.content {
@@ -181,10 +215,17 @@ pub fn render(
                     let header = Line::from(vec![
                         Span::styled(
                             format!("[{}] ", timestamp),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default()
+                                .fg(Color::DarkGray)
+                                .bg(bg_style.bg.unwrap_or(Color::Reset)),
                         ),
                         Span::styled(format!("{}: ", sender), sender_style),
-                        Span::styled(format!("📎 {}", name), Style::default().fg(Color::Yellow)),
+                        Span::styled(
+                            format!("📎 {}", name),
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .bg(bg_style.bg.unwrap_or(Color::Reset)),
+                        ),
                     ]);
 
                     if y_offset >= 0 {
@@ -260,11 +301,18 @@ pub fn render(
                 let line = Line::from(vec![
                     Span::styled(
                         format!("[{}] ", timestamp),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .bg(bg_style.bg.unwrap_or(Color::Reset)),
                     ),
                     Span::styled(format!("{}: ", sender), sender_style),
-                    Span::raw(text),
-                    Span::styled(edited_suffix, Style::default().fg(Color::DarkGray)),
+                    Span::styled(text, bg_style),
+                    Span::styled(
+                        edited_suffix,
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .bg(bg_style.bg.unwrap_or(Color::Reset)),
+                    ),
                 ]);
 
                 let render_start = y_offset.max(0) as u16;

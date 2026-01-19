@@ -1,5 +1,25 @@
 use crate::app::{App, Focus};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::io::Write;
+use std::process::{Command, Stdio};
+
+fn copy_to_clipboard(text: &str) {
+    if let Ok(mut child) = Command::new("wl-copy")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        return;
+    }
+
+    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+        let _ = clipboard.set_text(text);
+    }
+}
 
 pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     // Global shortcuts
@@ -23,12 +43,38 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             return;
         }
         KeyEvent { code: KeyCode::Esc, .. } => {
+            if app
+                .selected_conversation()
+                .is_some_and(|c| c.selection.is_some())
+            {
+                if let Some(conv) = app.selected_conversation_mut() {
+                    conv.exit_selection_mode();
+                }
+                return;
+            }
             app.filter_input.clear();
             app.focus = if app.focus == Focus::Input {
                 Focus::Messages
             } else {
                 Focus::Conversations
             };
+            return;
+        }
+        KeyEvent {
+            code: KeyCode::Char('h'),
+            modifiers,
+            ..
+        } if modifiers.contains(KeyModifiers::CONTROL) => {
+            app.filter_input.clear();
+            app.focus = Focus::Conversations;
+            return;
+        }
+        KeyEvent {
+            code: KeyCode::Char('l'),
+            modifiers,
+            ..
+        } if modifiers.contains(KeyModifiers::CONTROL) => {
+            app.focus = Focus::Messages;
             return;
         }
         _ => {}
@@ -112,6 +158,15 @@ fn handle_conversation_filter_key(app: &mut App, key: KeyEvent) {
 }
 
 fn handle_messages_key(app: &mut App, key: KeyEvent) {
+    let in_selection = app
+        .selected_conversation()
+        .is_some_and(|c| c.selection.is_some());
+
+    if in_selection {
+        handle_selection_key(app, key);
+        return;
+    }
+
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => app.scroll_messages_up(),
         KeyCode::Down | KeyCode::Char('j') => app.scroll_messages_down(),
@@ -126,7 +181,6 @@ fn handle_messages_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Home => {
-            // Scroll to top (oldest messages)
             for _ in 0..1000 {
                 app.scroll_messages_up();
             }
@@ -138,6 +192,64 @@ fn handle_messages_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Enter | KeyCode::Char('i') => {
             app.focus = Focus::Input;
+        }
+        KeyCode::Char('v') => {
+            if let Some(conv) = app.selected_conversation_mut() {
+                conv.enter_selection_mode();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_selection_key(app: &mut App, key: KeyEvent) {
+    match key {
+        KeyEvent {
+            code: KeyCode::Up | KeyCode::Char('k'),
+            modifiers,
+            ..
+        } => {
+            let extend = modifiers.contains(KeyModifiers::SHIFT);
+            if let Some(conv) = app.selected_conversation_mut() {
+                conv.move_selection(-1, extend);
+            }
+        }
+        KeyEvent {
+            code: KeyCode::Char('K'),
+            ..
+        } => {
+            if let Some(conv) = app.selected_conversation_mut() {
+                conv.move_selection(-1, true);
+            }
+        }
+        KeyEvent {
+            code: KeyCode::Down | KeyCode::Char('j'),
+            modifiers,
+            ..
+        } => {
+            let extend = modifiers.contains(KeyModifiers::SHIFT);
+            if let Some(conv) = app.selected_conversation_mut() {
+                conv.move_selection(1, extend);
+            }
+        }
+        KeyEvent {
+            code: KeyCode::Char('J'),
+            ..
+        } => {
+            if let Some(conv) = app.selected_conversation_mut() {
+                conv.move_selection(1, true);
+            }
+        }
+        KeyEvent {
+            code: KeyCode::Char('y'),
+            ..
+        } => {
+            if let Some(text) = app.selected_conversation().and_then(|c| c.get_selected_text()) {
+                copy_to_clipboard(&text);
+            }
+            if let Some(conv) = app.selected_conversation_mut() {
+                conv.exit_selection_mode();
+            }
         }
         _ => {}
     }

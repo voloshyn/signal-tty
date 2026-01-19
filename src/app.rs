@@ -82,15 +82,27 @@ impl InputState {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct MessageSelection {
+    pub anchor: usize,
+    pub cursor: usize,
+}
+
+impl MessageSelection {
+    pub fn range(&self) -> std::ops::RangeInclusive<usize> {
+        self.anchor.min(self.cursor)..=self.anchor.max(self.cursor)
+    }
+}
+
 pub const SCROLL_LINES: usize = 3;
 
 #[derive(Debug)]
 pub struct ConversationView {
     pub conversation: Conversation,
     pub messages: Option<Vec<Message>>,
-    /// Scroll offset in lines from bottom (0 = at bottom)
     pub scroll_offset: usize,
     pub has_more_messages: bool,
+    pub selection: Option<MessageSelection>,
 }
 
 impl ConversationView {
@@ -100,6 +112,7 @@ impl ConversationView {
             messages: None,
             scroll_offset: 0,
             has_more_messages: true,
+            selection: None,
         }
     }
 
@@ -206,8 +219,77 @@ impl ConversationView {
     pub fn add_message(&mut self, message: Message) {
         if let Some(ref mut msgs) = self.messages {
             msgs.push(message);
-            self.scroll_offset = 0; // Scroll to bottom
+            self.scroll_offset = 0;
         }
+    }
+
+    pub fn enter_selection_mode(&mut self) {
+        if let Some(ref msgs) = self.messages {
+            if !msgs.is_empty() {
+                let last_idx = msgs.len() - 1;
+                self.selection = Some(MessageSelection {
+                    anchor: last_idx,
+                    cursor: last_idx,
+                });
+            }
+        }
+    }
+
+    pub fn exit_selection_mode(&mut self) {
+        self.selection = None;
+    }
+
+    pub fn move_selection(&mut self, direction: i32, extend: bool) {
+        let msg_count = self.messages.as_ref().map(|m| m.len()).unwrap_or(0);
+        if msg_count == 0 {
+            return;
+        }
+
+        let Some(ref mut sel) = self.selection else {
+            return;
+        };
+
+        let new_cursor = if direction < 0 {
+            sel.cursor.saturating_sub(1)
+        } else {
+            (sel.cursor + 1).min(msg_count - 1)
+        };
+
+        sel.cursor = new_cursor;
+        if !extend {
+            sel.anchor = new_cursor;
+        }
+    }
+
+    pub fn get_selected_text(&self) -> Option<String> {
+        let msgs = self.messages.as_ref()?;
+        let sel = self.selection.as_ref()?;
+        let range = sel.range();
+
+        let mut lines = Vec::new();
+        for idx in range {
+            if let Some(msg) = msgs.get(idx) {
+                let text = match &msg.content {
+                    MessageContent::Text { body } => body.clone(),
+                    MessageContent::Attachment { attachments } => {
+                        attachments
+                            .iter()
+                            .map(|a| {
+                                a.filename
+                                    .as_deref()
+                                    .unwrap_or("[attachment]")
+                                    .to_string()
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                    MessageContent::Sticker { .. } => "[Sticker]".to_string(),
+                    MessageContent::RemoteDeleted => "[Deleted]".to_string(),
+                };
+                lines.push(text);
+            }
+        }
+        Some(lines.join("\n"))
     }
 }
 
