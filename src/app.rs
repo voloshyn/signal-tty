@@ -7,6 +7,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Conversations,
+    ConversationFilter,
     Messages,
     Input,
 }
@@ -220,6 +221,7 @@ pub struct App {
     pub selected: usize,
     pub focus: Focus,
     pub input: InputState,
+    pub filter_input: InputState,
 
     pub should_quit: bool,
     pub status_message: Option<String>,
@@ -244,6 +246,7 @@ impl App {
             selected: 0,
             focus: Focus::Conversations,
             input: InputState::default(),
+            filter_input: InputState::default(),
             should_quit: false,
             status_message: None,
             pending_send: None,
@@ -340,10 +343,11 @@ impl App {
 
     pub fn cycle_focus(&mut self) {
         self.focus = match self.focus {
-            Focus::Conversations => Focus::Messages,
+            Focus::Conversations | Focus::ConversationFilter => Focus::Messages,
             Focus::Messages => Focus::Input,
             Focus::Input => Focus::Conversations,
         };
+        self.filter_input.clear();
     }
 
     #[allow(dead_code)]
@@ -651,6 +655,87 @@ impl App {
                 .position(|c| c.conversation.id == id)
         {
             self.selected = new_idx;
+        }
+    }
+
+    pub fn filtered_conversation_indices(&self) -> Vec<usize> {
+        let filter = self.filter_input.text.to_lowercase();
+        if filter.is_empty() {
+            return (0..self.conversations.len()).collect();
+        }
+
+        self.conversations
+            .iter()
+            .enumerate()
+            .filter(|(_, conv_view)| {
+                let conv = &conv_view.conversation;
+
+                let is_note_to_self = self.my_number.as_ref().is_some_and(|my_num| {
+                    conv.recipient_number.as_ref() == Some(my_num)
+                }) || self.my_uuid.as_ref().is_some_and(|my_uuid| {
+                    conv.recipient_uuid.as_ref() == Some(my_uuid)
+                });
+
+                if is_note_to_self && "note to self".contains(&filter) {
+                    return true;
+                }
+
+                let name = conv.display_name().to_lowercase();
+                if name.contains(&filter) {
+                    return true;
+                }
+                if let Some(ref number) = conv.recipient_number {
+                    if number.to_lowercase().contains(&filter) {
+                        return true;
+                    }
+                }
+                if let Some(ref uuid) = conv.recipient_uuid {
+                    if uuid.to_lowercase().contains(&filter) {
+                        return true;
+                    }
+                }
+                false
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    pub fn select_filtered(&mut self, direction: i32) {
+        let indices = self.filtered_conversation_indices();
+        if indices.is_empty() {
+            return;
+        }
+
+        let current_pos = indices.iter().position(|&i| i == self.selected);
+        let new_pos = match current_pos {
+            Some(pos) => {
+                if direction > 0 {
+                    (pos + 1).min(indices.len() - 1)
+                } else {
+                    pos.saturating_sub(1)
+                }
+            }
+            None => 0,
+        };
+
+        if let Some(&new_idx) = indices.get(new_pos) {
+            self.selected = new_idx;
+            if self.conversations[self.selected].load_messages(&self.storage) {
+                self.needs_image_preload = true;
+            }
+        }
+    }
+
+    pub fn ensure_selection_matches_filter(&mut self) {
+        let indices = self.filtered_conversation_indices();
+        if indices.is_empty() || indices.contains(&self.selected) {
+            return;
+        }
+        if let Some(&first) = indices.first() {
+            self.selected = first;
+            if self.conversations[self.selected].load_messages(&self.storage) {
+                self.needs_image_preload = true;
+            }
         }
     }
 }

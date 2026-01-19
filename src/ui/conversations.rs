@@ -1,4 +1,4 @@
-use crate::app::App;
+use crate::app::{App, Focus};
 use crate::avatar::AvatarManager;
 use crate::storage::ConversationType;
 use ratatui::Frame;
@@ -19,7 +19,9 @@ pub fn render(
     focused: bool,
     avatar_manager: &mut Option<AvatarManager>,
 ) {
-    let border_color = if focused {
+    let in_filter_mode = app.focus == Focus::ConversationFilter;
+    let has_filter = !app.filter_input.text.is_empty();
+    let border_color = if focused || in_filter_mode {
         Color::Cyan
     } else {
         Color::DarkGray
@@ -33,23 +35,40 @@ pub fn render(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    let (list_inner, filter_area) = if in_filter_mode || has_filter {
+        let [list_area, filter_area] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+        (list_area, Some(filter_area))
+    } else {
+        (inner, None)
+    };
+
     if app.conversations.is_empty() {
+        if let Some(filter_area) = filter_area {
+            render_filter_input(frame, filter_area, app);
+        }
         return;
     }
 
     let has_avatars = avatar_manager.is_some();
+    let filtered_indices = app.filtered_conversation_indices();
 
     let [avatar_area, list_area] = if has_avatars {
-        Layout::horizontal([Constraint::Length(AVATAR_WIDTH), Constraint::Min(10)]).areas(inner)
+        Layout::horizontal([Constraint::Length(AVATAR_WIDTH), Constraint::Min(10)])
+            .areas(list_inner)
     } else {
-        [Rect::default(), inner]
+        [Rect::default(), list_inner]
     };
 
-    let items: Vec<ListItem> = app
-        .conversations
+    let selected_in_filtered = filtered_indices
         .iter()
-        .enumerate()
-        .map(|(i, conv_view)| {
+        .position(|&i| i == app.selected)
+        .unwrap_or(0);
+
+    let items: Vec<ListItem> = filtered_indices
+        .iter()
+        .map(|&i| {
+            let conv_view = &app.conversations[i];
             let conv = &conv_view.conversation;
             let is_note_to_self = app.my_number.as_ref().is_some_and(|my_num| {
                 conv.recipient_number.as_ref() == Some(my_num)
@@ -94,59 +113,16 @@ pub fn render(
     );
 
     let mut state = ListState::default();
-    state.select(Some(app.selected));
+    state.select(Some(selected_in_filtered));
 
     frame.render_stateful_widget(list, list_area, &mut state);
 
     if let Some(mgr) = avatar_manager {
-        render_avatars(frame, avatar_area, app, mgr, state.offset());
+        render_avatars_filtered(frame, avatar_area, app, mgr, &filtered_indices, state.offset());
     }
-}
 
-fn render_avatars(
-    frame: &mut Frame,
-    area: Rect,
-    app: &App,
-    mgr: &mut AvatarManager,
-    scroll_offset: usize,
-) {
-    let visible_count = (area.height / ITEM_HEIGHT) as usize;
-
-    for (i, conv_view) in app
-        .conversations
-        .iter()
-        .skip(scroll_offset)
-        .take(visible_count)
-        .enumerate()
-    {
-        let conv = &conv_view.conversation;
-
-        let y = area.y + (i as u16) * ITEM_HEIGHT;
-        if y + ITEM_HEIGHT > area.y + area.height {
-            break;
-        }
-
-        let avatar_rect = Rect {
-            x: area.x,
-            y,
-            width: area.width,
-            height: ITEM_HEIGHT,
-        };
-
-        if let Some(protocol) = mgr.get_conversation_avatar(
-            conv.recipient_uuid.as_deref(),
-            conv.recipient_number.as_deref(),
-        ) {
-            let image: StatefulImage<StatefulProtocol> = StatefulImage::default();
-            frame.render_stateful_widget(image, avatar_rect, protocol);
-        } else {
-            render_placeholder(
-                frame,
-                avatar_rect,
-                &conv.display_name(),
-                conv.conversation_type,
-            );
-        }
+    if let Some(filter_area) = filter_area {
+        render_filter_input(frame, filter_area, app);
     }
 }
 
@@ -185,4 +161,83 @@ fn has_unread(conv_view: &crate::app::ConversationView) -> bool {
     } else {
         false
     }
+}
+
+fn render_avatars_filtered(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    mgr: &mut AvatarManager,
+    filtered_indices: &[usize],
+    scroll_offset: usize,
+) {
+    let visible_count = (area.height / ITEM_HEIGHT) as usize;
+
+    for (i, &conv_idx) in filtered_indices
+        .iter()
+        .skip(scroll_offset)
+        .take(visible_count)
+        .enumerate()
+    {
+        let conv = &app.conversations[conv_idx].conversation;
+
+        let y = area.y + (i as u16) * ITEM_HEIGHT;
+        if y + ITEM_HEIGHT > area.y + area.height {
+            break;
+        }
+
+        let avatar_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: ITEM_HEIGHT,
+        };
+
+        if let Some(protocol) = mgr.get_conversation_avatar(
+            conv.recipient_uuid.as_deref(),
+            conv.recipient_number.as_deref(),
+        ) {
+            let image: StatefulImage<StatefulProtocol> = StatefulImage::default();
+            frame.render_stateful_widget(image, avatar_rect, protocol);
+        } else {
+            render_placeholder(frame, avatar_rect, &conv.display_name(), conv.conversation_type);
+        }
+    }
+}
+
+fn render_filter_input(frame: &mut Frame, area: Rect, app: &App) {
+    use ratatui::widgets::Paragraph;
+
+    let filter_text = &app.filter_input.text;
+    let editing = app.focus == Focus::ConversationFilter;
+
+    let mut spans = vec![Span::styled("/", Style::default().fg(Color::Yellow))];
+
+    if editing {
+        let cursor_pos = app.filter_input.cursor;
+        if filter_text.is_empty() {
+            spans.push(Span::styled(
+                " ",
+                Style::default().bg(Color::White).fg(Color::Black),
+            ));
+        } else {
+            let before_cursor = &filter_text[..cursor_pos];
+            let cursor_char = filter_text[cursor_pos..].chars().next();
+            let after_cursor = cursor_char
+                .map(|c| &filter_text[cursor_pos + c.len_utf8()..])
+                .unwrap_or("");
+
+            spans.push(Span::raw(before_cursor));
+            spans.push(Span::styled(
+                cursor_char.map(|c| c.to_string()).unwrap_or(" ".to_string()),
+                Style::default().bg(Color::White).fg(Color::Black),
+            ));
+            spans.push(Span::raw(after_cursor));
+        }
+    } else {
+        spans.push(Span::styled(filter_text, Style::default().fg(Color::DarkGray)));
+    }
+
+    let paragraph = Paragraph::new(Line::from(spans));
+    frame.render_widget(paragraph, area);
 }

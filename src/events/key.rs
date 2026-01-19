@@ -11,7 +11,9 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             return;
         }
         KeyEvent { code: KeyCode::Char('q'), modifiers, .. }
-            if modifiers.is_empty() && app.focus != Focus::Input =>
+            if modifiers.is_empty()
+                && app.focus != Focus::Input
+                && app.focus != Focus::ConversationFilter =>
         {
             app.should_quit = true;
             return;
@@ -21,6 +23,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             return;
         }
         KeyEvent { code: KeyCode::Esc, .. } => {
+            app.filter_input.clear();
             app.focus = Focus::Conversations;
             return;
         }
@@ -30,17 +33,75 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     // Focus-specific handling
     match app.focus {
         Focus::Conversations => handle_conversations_key(app, key),
+        Focus::ConversationFilter => handle_conversation_filter_key(app, key),
         Focus::Messages => handle_messages_key(app, key),
         Focus::Input => handle_input_key(app, key),
     }
 }
 
 fn handle_conversations_key(app: &mut App, key: KeyEvent) {
+    let has_filter = !app.filter_input.text.is_empty();
     match key.code {
-        KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
-        KeyCode::Down | KeyCode::Char('j') => app.select_next(),
+        KeyCode::Up | KeyCode::Char('k') => {
+            if has_filter {
+                app.select_filtered(-1);
+            } else {
+                app.select_prev();
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if has_filter {
+                app.select_filtered(1);
+            } else {
+                app.select_next();
+            }
+        }
+        KeyCode::Char('/') => {
+            app.focus = Focus::ConversationFilter;
+        }
         KeyCode::Enter => {
             app.focus = Focus::Input;
+        }
+        _ => {}
+    }
+}
+
+fn handle_conversation_filter_key(app: &mut App, key: KeyEvent) {
+    match key {
+        KeyEvent { code: KeyCode::Enter, .. } => {
+            app.focus = Focus::Conversations;
+        }
+        KeyEvent { code: KeyCode::Up, .. } => {
+            app.select_filtered(-1);
+        }
+        KeyEvent { code: KeyCode::Down, .. } => {
+            app.select_filtered(1);
+        }
+        KeyEvent { code: KeyCode::Backspace, .. } => {
+            app.filter_input.delete_back();
+            app.ensure_selection_matches_filter();
+        }
+        KeyEvent { code: KeyCode::Delete, .. } => {
+            app.filter_input.delete_forward();
+            app.ensure_selection_matches_filter();
+        }
+        KeyEvent { code: KeyCode::Left, .. } => {
+            app.filter_input.move_left();
+        }
+        KeyEvent { code: KeyCode::Right, .. } => {
+            app.filter_input.move_right();
+        }
+        KeyEvent { code: KeyCode::Home, .. } => {
+            app.filter_input.move_start();
+        }
+        KeyEvent { code: KeyCode::End, .. } => {
+            app.filter_input.move_end();
+        }
+        KeyEvent { code: KeyCode::Char(c), modifiers, .. }
+            if !modifiers.contains(KeyModifiers::CONTROL) =>
+        {
+            app.filter_input.insert(c);
+            app.ensure_selection_matches_filter();
         }
         _ => {}
     }
