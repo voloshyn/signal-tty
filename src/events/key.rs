@@ -24,7 +24,11 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         }
         KeyEvent { code: KeyCode::Esc, .. } => {
             app.filter_input.clear();
-            app.focus = Focus::Conversations;
+            app.focus = if app.focus == Focus::Input {
+                Focus::Messages
+            } else {
+                Focus::Conversations
+            };
             return;
         }
         _ => {}
@@ -59,7 +63,7 @@ fn handle_conversations_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('/') => {
             app.focus = Focus::ConversationFilter;
         }
-        KeyCode::Enter => {
+        KeyCode::Enter | KeyCode::Char('i') => {
             app.focus = Focus::Input;
         }
         _ => {}
@@ -132,7 +136,7 @@ fn handle_messages_key(app: &mut App, key: KeyEvent) {
                 conv.scroll_to_bottom();
             }
         }
-        KeyCode::Enter => {
+        KeyCode::Enter | KeyCode::Char('i') => {
             app.focus = Focus::Input;
         }
         _ => {}
