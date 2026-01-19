@@ -159,6 +159,32 @@ async fn main() -> anyhow::Result<()> {
         if let Some(text) = app.pending_send.take() {
             needs_redraw = true;
             if let Some(target) = app.get_send_target() {
+                let my_uuid = app.my_uuid.clone().unwrap_or_default();
+                let conv_id = app
+                    .selected_conversation()
+                    .map(|c| c.conversation.id.clone());
+
+                let mut message = None;
+                if let Some(ref conv_id) = conv_id {
+                    let msg = Message {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        conversation_id: conv_id.clone(),
+                        sender_uuid: my_uuid,
+                        sender_name: None,
+                        timestamp: now_millis(),
+                        server_timestamp: None,
+                        received_at: now_millis(),
+                        content: MessageContent::Text { body: text.clone() },
+                        quote: None,
+                        is_outgoing: true,
+                        is_read: true,
+                        is_deleted: false,
+                        is_edited: false,
+                    };
+                    app.add_message_to_conversation(conv_id, msg.clone());
+                    message = Some(msg);
+                }
+
                 let result = match &target {
                     SendTarget::Direct(recipient) => {
                         app.signal.send_message(recipient, &text).await
@@ -170,32 +196,12 @@ async fn main() -> anyhow::Result<()> {
 
                 match result {
                     Ok(send_result) => {
-                        let my_uuid = app.my_uuid.clone().unwrap_or_default();
-                        let conversation_id = app
-                            .selected_conversation()
-                            .map(|c| c.conversation.id.clone());
-
-                        if let Some(conv_id) = conversation_id {
-                            let timestamp = send_result.timestamp.unwrap_or_else(now_millis);
-                            let message = Message {
-                                id: uuid::Uuid::new_v4().to_string(),
-                                conversation_id: conv_id.clone(),
-                                sender_uuid: my_uuid,
-                                sender_name: None,
-                                timestamp,
-                                server_timestamp: None,
-                                received_at: now_millis(),
-                                content: MessageContent::Text { body: text.clone() },
-                                quote: None,
-                                is_outgoing: true,
-                                is_read: true,
-                                is_deleted: false,
-                                is_edited: false,
-                            };
-                            let _ = app.storage.save_message(&message);
-                            app.add_message_to_conversation(&conv_id, message);
+                        if let Some(mut msg) = message {
+                            if let Some(ts) = send_result.timestamp {
+                                msg.timestamp = ts;
+                            }
+                            let _ = app.storage.save_message(&msg);
                         }
-                        app.status_message = Some("Sent".to_string());
                     }
                     Err(e) => {
                         app.status_message = Some(format!("Send failed: {}", e));
