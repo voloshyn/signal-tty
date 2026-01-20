@@ -291,6 +291,77 @@ impl ConversationView {
         }
         Some(lines.join("\n"))
     }
+
+    pub fn delete_selected_messages(&mut self) -> Vec<String> {
+        let Some(ref sel) = self.selection else {
+            return Vec::new();
+        };
+        let Some(ref mut msgs) = self.messages else {
+            return Vec::new();
+        };
+
+        let range = sel.range();
+        let ids: Vec<String> = range
+            .clone()
+            .filter_map(|idx| msgs.get(idx).map(|m| m.id.clone()))
+            .collect();
+
+        let indices_to_remove: Vec<usize> = range.collect();
+        for idx in indices_to_remove.into_iter().rev() {
+            if idx < msgs.len() {
+                msgs.remove(idx);
+            }
+        }
+
+        self.selection = None;
+        ids
+    }
+
+    pub fn get_selected_outgoing_timestamps(&self) -> Vec<i64> {
+        let Some(ref sel) = self.selection else {
+            return Vec::new();
+        };
+        let Some(ref msgs) = self.messages else {
+            return Vec::new();
+        };
+
+        sel.range()
+            .filter_map(|idx| {
+                msgs.get(idx)
+                    .filter(|m| m.is_outgoing)
+                    .map(|m| m.timestamp)
+            })
+            .collect()
+    }
+
+    pub fn remote_delete_target(&self) -> Option<RemoteDeleteTarget> {
+        match self.conversation.conversation_type {
+            ConversationType::Direct => {
+                let recipient = self
+                    .conversation
+                    .recipient_uuid
+                    .clone()
+                    .or_else(|| self.conversation.recipient_number.clone())?;
+                Some(RemoteDeleteTarget::Direct(recipient))
+            }
+            ConversationType::Group => {
+                let group_id = self.conversation.group_id.clone()?;
+                Some(RemoteDeleteTarget::Group(group_id))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum RemoteDeleteTarget {
+    Direct(String),
+    Group(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingRemoteDelete {
+    pub target: RemoteDeleteTarget,
+    pub timestamps: Vec<i64>,
 }
 
 pub struct App {
@@ -308,6 +379,7 @@ pub struct App {
     pub should_quit: bool,
     pub status_message: Option<String>,
     pub pending_send: Option<String>,
+    pub pending_remote_deletes: Vec<PendingRemoteDelete>,
     pub messages_height: usize,
     pub needs_image_preload: bool,
     pub pending_preload_paths: Vec<String>,
@@ -332,6 +404,7 @@ impl App {
             should_quit: false,
             status_message: None,
             pending_send: None,
+            pending_remote_deletes: Vec::new(),
             messages_height: 20,
             needs_image_preload: false,
             pending_preload_paths: Vec::new(),

@@ -6,7 +6,7 @@ mod infrastructure;
 mod storage;
 mod ui;
 
-use app::{App, SendTarget};
+use app::{App, RemoteDeleteTarget, SendTarget};
 use avatar::AvatarManager;
 use crossterm::ExecutableCommand;
 use crossterm::cursor;
@@ -197,8 +197,16 @@ async fn main() -> anyhow::Result<()> {
                 match result {
                     Ok(send_result) => {
                         if let Some(mut msg) = message {
+                            let old_ts = msg.timestamp;
                             if let Some(ts) = send_result.timestamp {
                                 msg.timestamp = ts;
+                                if let Some(conv) = app.selected_conversation_mut() {
+                                    if let Some(ref mut msgs) = conv.messages {
+                                        if let Some(m) = msgs.iter_mut().find(|m| m.timestamp == old_ts) {
+                                            m.timestamp = ts;
+                                        }
+                                    }
+                                }
                             }
                             let _ = app.storage.save_message(&msg);
                         }
@@ -206,6 +214,22 @@ async fn main() -> anyhow::Result<()> {
                     Err(e) => {
                         app.status_message = Some(format!("Send failed: {}", e));
                     }
+                }
+            }
+        }
+
+        for pending in std::mem::take(&mut app.pending_remote_deletes) {
+            for ts in pending.timestamps {
+                let result = match &pending.target {
+                    RemoteDeleteTarget::Direct(recipient) => {
+                        app.signal.remote_delete(recipient, ts).await
+                    }
+                    RemoteDeleteTarget::Group(group_id) => {
+                        app.signal.remote_delete_group(group_id, ts).await
+                    }
+                };
+                if let Err(e) = result {
+                    app.status_message = Some(format!("Remote delete failed: {}", e));
                 }
             }
         }

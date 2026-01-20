@@ -37,5 +37,8 @@ pub trait SignalRepository: Send + Sync {
 
     async fn send_read_receipt(&self, recipient: &str, timestamps: Vec<i64>) -> Result<(), SignalError>;
 
+    async fn remote_delete(&self, recipient: &str, target_timestamp: i64) -> Result<(), SignalError>;
+    async fn remote_delete_group(&self, group_id: &str, target_timestamp: i64) -> Result<(), SignalError>;
+
     fn incoming_messages(&self) -> broadcast::Receiver<IncomingMessage>;
 }

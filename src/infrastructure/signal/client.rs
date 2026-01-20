@@ -414,6 +414,46 @@ impl SignalRepository for SignalClient {
         Ok(())
     }
 
+    async fn remote_delete(&self, recipient: &str, target_timestamp: i64) -> Result<(), SignalError> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Params {
+            recipient: Vec<String>,
+            target_timestamp: i64,
+        }
+
+        let _: Value = self
+            .call(
+                "remoteDelete",
+                Params {
+                    recipient: vec![recipient.to_string()],
+                    target_timestamp,
+                },
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn remote_delete_group(&self, group_id: &str, target_timestamp: i64) -> Result<(), SignalError> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Params {
+            group_id: String,
+            target_timestamp: i64,
+        }
+
+        let _: Value = self
+            .call(
+                "remoteDelete",
+                Params {
+                    group_id: group_id.to_string(),
+                    target_timestamp,
+                },
+            )
+            .await?;
+        Ok(())
+    }
+
     fn incoming_messages(&self) -> broadcast::Receiver<IncomingMessage> {
         self.message_sender.subscribe()
     }

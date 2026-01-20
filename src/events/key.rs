@@ -1,4 +1,5 @@
-use crate::app::{App, Focus};
+use crate::app::{App, Focus, PendingRemoteDelete};
+use crate::storage::StorageRepository;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -249,6 +250,38 @@ fn handle_selection_key(app: &mut App, key: KeyEvent) {
             }
             if let Some(conv) = app.selected_conversation_mut() {
                 conv.exit_selection_mode();
+            }
+        }
+        KeyEvent {
+            code: KeyCode::Char('d'),
+            ..
+        } => {
+            if let Some(conv) = app.selected_conversation_mut() {
+                let ids = conv.delete_selected_messages();
+                for id in ids {
+                    let _ = app.storage.delete_message(&id);
+                }
+            }
+        }
+        KeyEvent {
+            code: KeyCode::Char('D'),
+            ..
+        } => {
+            if let Some(conv) = app.selected_conversation_mut() {
+                let timestamps = conv.get_selected_outgoing_timestamps();
+                let target = conv.remote_delete_target();
+                let ids = conv.delete_selected_messages();
+                for id in &ids {
+                    let _ = app.storage.delete_message(id);
+                }
+                if let Some(target) = target {
+                    if !timestamps.is_empty() {
+                        app.pending_remote_deletes.push(PendingRemoteDelete {
+                            target,
+                            timestamps,
+                        });
+                    }
+                }
             }
         }
         _ => {}
