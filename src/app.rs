@@ -350,6 +350,29 @@ impl ConversationView {
             }
         }
     }
+
+    pub fn get_selected_attachment_paths(&self) -> Vec<String> {
+        let Some(ref sel) = self.selection else {
+            return Vec::new();
+        };
+        let Some(ref msgs) = self.messages else {
+            return Vec::new();
+        };
+
+        let mut paths = Vec::new();
+        for idx in sel.range() {
+            if let Some(msg) = msgs.get(idx) {
+                if let MessageContent::Attachment { attachments } = &msg.content {
+                    for att in attachments {
+                        if let Some(path) = &att.local_path {
+                            paths.push(path.clone());
+                        }
+                    }
+                }
+            }
+        }
+        paths
+    }
 }
 
 #[derive(Debug, Clone)]

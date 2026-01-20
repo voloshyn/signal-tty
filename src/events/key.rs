@@ -284,6 +284,34 @@ fn handle_selection_key(app: &mut App, key: KeyEvent) {
                 }
             }
         }
+        KeyEvent {
+            code: KeyCode::Enter | KeyCode::Char('o'),
+            ..
+        } => {
+            if let Some(conv) = app.selected_conversation() {
+                let paths = conv.get_selected_attachment_paths();
+                let attachments_dir = std::env::var("HOME")
+                    .map(|h| std::path::PathBuf::from(h).join(".local/share/signal-cli/attachments"))
+                    .ok();
+                for path in paths {
+                    let full_path = if path.starts_with('/') {
+                        std::path::PathBuf::from(&path)
+                    } else if let Some(ref dir) = attachments_dir {
+                        dir.join(&path)
+                    } else {
+                        continue;
+                    };
+                    let _ = Command::new("xdg-open")
+                        .arg(&full_path)
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .spawn();
+                }
+            }
+            if let Some(conv) = app.selected_conversation_mut() {
+                conv.exit_selection_mode();
+            }
+        }
         _ => {}
     }
 }
