@@ -257,10 +257,15 @@ pub struct ConversationView {
     pub has_more_messages: bool,
     pub selection: Option<MessageSelection>,
     pub visible_range: Option<(usize, usize)>,
+    pub last_message_preview: Option<Message>,
 }
 
 impl ConversationView {
-    pub fn new(conversation: Conversation) -> Self {
+    pub fn new(conversation: Conversation, storage: &SqliteStorage) -> Self {
+        let last_message_preview = storage
+            .list_messages(&conversation.id, 1, None)
+            .ok()
+            .and_then(|msgs| msgs.into_iter().next());
         Self {
             conversation,
             messages: None,
@@ -268,6 +273,7 @@ impl ConversationView {
             has_more_messages: true,
             selection: None,
             visible_range: None,
+            last_message_preview,
         }
     }
 
@@ -372,6 +378,7 @@ impl ConversationView {
     }
 
     pub fn add_message(&mut self, message: Message) {
+        self.last_message_preview = Some(message.clone());
         if let Some(ref mut msgs) = self.messages {
             msgs.push(message);
             self.scroll_offset = 0;
@@ -613,7 +620,10 @@ impl App {
 
     pub fn load_conversations(&mut self) {
         if let Ok(convs) = self.storage.list_conversations() {
-            self.conversations = convs.into_iter().map(ConversationView::new).collect();
+            self.conversations = convs
+                .into_iter()
+                .map(|c| ConversationView::new(c, &self.storage))
+                .collect();
             let first_with_messages = self
                 .conversations
                 .iter()

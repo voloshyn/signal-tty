@@ -1,6 +1,6 @@
-use crate::app::{App, Focus};
+use crate::app::{App, ConversationView, Focus};
 use crate::avatar::AvatarManager;
-use crate::storage::ConversationType;
+use crate::storage::{ConversationType, MessageContent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -9,8 +9,8 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 use ratatui_image::StatefulImage;
 use ratatui_image::protocol::StatefulProtocol;
 
-const ITEM_HEIGHT: u16 = 2;
-const AVATAR_WIDTH: u16 = 5;
+const ITEM_HEIGHT: u16 = 4;
+const AVATAR_WIDTH: u16 = 8;
 
 pub fn render(
     frame: &mut Frame,
@@ -65,6 +65,8 @@ pub fn render(
         .position(|&i| i == app.selected)
         .unwrap_or(0);
 
+    let preview_width = list_area.width.saturating_sub(2) as usize;
+
     let items: Vec<ListItem> = filtered_indices
         .iter()
         .map(|&i| {
@@ -90,10 +92,15 @@ pub fn render(
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White)
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
             };
 
             let unread_indicator = if has_unread(conv_view) { " ●" } else { "" };
+
+            let (line1, line2) = format_message_preview(conv_view, preview_width);
+            let preview_style = Style::default().fg(Color::Gray);
 
             ListItem::new(vec![
                 Line::from(vec![
@@ -101,6 +108,8 @@ pub fn render(
                     Span::styled(name, style),
                     Span::styled(unread_indicator, Style::default().fg(Color::Green)),
                 ]),
+                Line::from(Span::styled(format!(" {}", line1), preview_style)),
+                Line::from(Span::styled(format!(" {}", line2), preview_style)),
                 Line::default(),
             ])
         })
@@ -118,7 +127,14 @@ pub fn render(
     frame.render_stateful_widget(list, list_area, &mut state);
 
     if let Some(mgr) = avatar_manager {
-        render_avatars_filtered(frame, avatar_area, app, mgr, &filtered_indices, state.offset());
+        render_avatars_filtered(
+            frame,
+            avatar_area,
+            app,
+            mgr,
+            &filtered_indices,
+            state.offset(),
+        );
     }
 
     if let Some(filter_area) = filter_area {
@@ -127,7 +143,7 @@ pub fn render(
 }
 
 fn render_placeholder(frame: &mut Frame, area: Rect, name: &str, conv_type: ConversationType) {
-    use ratatui::widgets::Paragraph;
+    use ratatui::widgets::{Block, Paragraph};
 
     let first_char = name
         .chars()
@@ -141,26 +157,81 @@ fn render_placeholder(frame: &mut Frame, area: Rect, name: &str, conv_type: Conv
         ConversationType::Group => Color::Magenta,
     };
 
+    let bg_block = Block::default().style(Style::default().bg(color));
+    frame.render_widget(bg_block, area);
+
     let placeholder = Paragraph::new(first_char.to_string())
         .style(Style::default().fg(Color::White).bg(color))
         .alignment(ratatui::layout::Alignment::Center);
 
-    let centered = Rect {
-        x: area.x + area.width.saturating_sub(2) / 2,
-        y: area.y,
-        width: 2.min(area.width),
-        height: 1.min(area.height),
+    let text_area = Rect {
+        x: area.x,
+        y: area.y + area.height.saturating_sub(1) / 2,
+        width: area.width,
+        height: 1,
     };
 
-    frame.render_widget(placeholder, centered);
+    frame.render_widget(placeholder, text_area);
 }
 
-fn has_unread(conv_view: &crate::app::ConversationView) -> bool {
+fn has_unread(conv_view: &ConversationView) -> bool {
     if let Some(ref messages) = conv_view.messages {
         messages.iter().any(|m| !m.is_read && !m.is_outgoing)
     } else {
         false
     }
+}
+
+fn format_message_preview(conv_view: &ConversationView, max_width: usize) -> (String, String) {
+    let last_msg = conv_view
+        .last_message_preview
+        .as_ref()
+        .or_else(|| conv_view.messages.as_ref().and_then(|m| m.last()));
+
+    let Some(last_msg) = last_msg else {
+        return (String::new(), String::new());
+    };
+
+    let prefix = if last_msg.is_outgoing { "You: " } else { "" };
+
+    let content = match &last_msg.content {
+        MessageContent::Text { body } => body.replace('\n', " "),
+        MessageContent::Attachment { attachments } => {
+            if attachments.len() == 1 {
+                format!(
+                    "📎 {}",
+                    attachments[0].filename.as_deref().unwrap_or("Attachment")
+                )
+            } else {
+                format!("📎 {} attachments", attachments.len())
+            }
+        }
+        MessageContent::Sticker { .. } => "🖼 Sticker".to_string(),
+        MessageContent::RemoteDeleted => "Message deleted".to_string(),
+    };
+
+    let full = format!("{}{}", prefix, content);
+    split_into_lines(&full, max_width)
+}
+
+fn split_into_lines(s: &str, max_width: usize) -> (String, String) {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_width {
+        return (s.to_string(), String::new());
+    }
+
+    let line1: String = chars[..max_width].iter().collect();
+    let remaining: Vec<char> = chars[max_width..].iter().copied().collect();
+
+    let line2 = if remaining.len() <= max_width {
+        remaining.iter().collect()
+    } else if max_width > 1 {
+        remaining[..max_width - 1].iter().collect::<String>() + "…"
+    } else {
+        String::new()
+    };
+
+    (line1, line2)
 }
 
 fn render_avatars_filtered(
@@ -200,7 +271,12 @@ fn render_avatars_filtered(
             let image: StatefulImage<StatefulProtocol> = StatefulImage::default();
             frame.render_stateful_widget(image, avatar_rect, protocol);
         } else {
-            render_placeholder(frame, avatar_rect, &conv.display_name(), conv.conversation_type);
+            render_placeholder(
+                frame,
+                avatar_rect,
+                &conv.display_name(),
+                conv.conversation_type,
+            );
         }
     }
 }
@@ -229,13 +305,18 @@ fn render_filter_input(frame: &mut Frame, area: Rect, app: &App) {
 
             spans.push(Span::raw(before_cursor));
             spans.push(Span::styled(
-                cursor_char.map(|c| c.to_string()).unwrap_or(" ".to_string()),
+                cursor_char
+                    .map(|c| c.to_string())
+                    .unwrap_or(" ".to_string()),
                 Style::default().bg(Color::White).fg(Color::Black),
             ));
             spans.push(Span::raw(after_cursor));
         }
     } else {
-        spans.push(Span::styled(filter_text, Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(
+            filter_text,
+            Style::default().fg(Color::DarkGray),
+        ));
     }
 
     let paragraph = Paragraph::new(Line::from(spans));
