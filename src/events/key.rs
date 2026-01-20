@@ -242,6 +242,30 @@ fn handle_selection_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyEvent {
+            code: KeyCode::Char('v'),
+            ..
+        } => {
+            if let Some(conv) = app.selected_conversation_mut() {
+                conv.move_selection(1, true);
+            }
+        }
+        KeyEvent {
+            code: KeyCode::Char('V'),
+            ..
+        } => {
+            if let Some(conv) = app.selected_conversation_mut() {
+                conv.move_selection(-1, true);
+            }
+        }
+        KeyEvent {
+            code: KeyCode::Char('u'),
+            ..
+        } => {
+            if let Some(conv) = app.selected_conversation_mut() {
+                conv.shrink_selection();
+            }
+        }
+        KeyEvent {
             code: KeyCode::Char('y'),
             ..
         } => {

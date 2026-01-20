@@ -267,6 +267,18 @@ impl ConversationView {
         }
     }
 
+    pub fn shrink_selection(&mut self) {
+        let Some(ref mut sel) = self.selection else {
+            return;
+        };
+
+        if sel.cursor > sel.anchor {
+            sel.cursor -= 1;
+        } else if sel.cursor < sel.anchor {
+            sel.cursor += 1;
+        }
+    }
+
     pub fn get_selected_text(&self) -> Option<String> {
         let msgs = self.messages.as_ref()?;
         let sel = self.selection.as_ref()?;
