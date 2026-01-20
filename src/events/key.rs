@@ -34,7 +34,8 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         KeyEvent { code: KeyCode::Char('q'), modifiers, .. }
             if modifiers.is_empty()
                 && app.focus != Focus::Input
-                && app.focus != Focus::ConversationFilter =>
+                && app.focus != Focus::ConversationFilter
+                && app.focus != Focus::FileBrowser =>
         {
             app.should_quit = true;
             return;
@@ -54,10 +55,10 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 return;
             }
             app.filter_input.clear();
-            app.focus = if app.focus == Focus::Input {
-                Focus::Messages
-            } else {
-                Focus::Conversations
+            app.focus = match app.focus {
+                Focus::Input => Focus::Messages,
+                Focus::FileBrowser => Focus::Input,
+                _ => Focus::Conversations,
             };
             return;
         }
@@ -87,6 +88,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         Focus::ConversationFilter => handle_conversation_filter_key(app, key),
         Focus::Messages => handle_messages_key(app, key),
         Focus::Input => handle_input_key(app, key),
+        Focus::FileBrowser => handle_file_browser_key(app, key),
     }
 }
 
@@ -344,7 +346,7 @@ fn handle_input_key(app: &mut App, key: KeyEvent) {
     match key {
         KeyEvent { code: KeyCode::Enter, .. } => {
             let text = app.input.clear();
-            if !text.is_empty() {
+            if !text.is_empty() || !app.pending_attachments.is_empty() {
                 app.queue_send_message(text);
             }
         }
@@ -366,10 +368,72 @@ fn handle_input_key(app: &mut App, key: KeyEvent) {
         KeyEvent { code: KeyCode::End, .. } => {
             app.input.move_end();
         }
-        KeyEvent { code: KeyCode::Char(c), modifiers, .. } 
+        KeyEvent {
+            code: KeyCode::Char('a'),
+            modifiers,
+            ..
+        } if modifiers.contains(KeyModifiers::CONTROL) => {
+            app.file_browser.refresh();
+            app.focus = Focus::FileBrowser;
+        }
+        KeyEvent {
+            code: KeyCode::Char('x'),
+            modifiers,
+            ..
+        } if modifiers.contains(KeyModifiers::CONTROL) => {
+            app.pending_attachments.clear();
+        }
+        KeyEvent { code: KeyCode::Char(c), modifiers, .. }
             if !modifiers.contains(KeyModifiers::CONTROL) =>
         {
             app.input.insert(c);
+        }
+        _ => {}
+    }
+}
+
+fn handle_file_browser_key(app: &mut App, key: KeyEvent) {
+    match key {
+        KeyEvent { code: KeyCode::Up | KeyCode::Char('k'), .. } => {
+            app.file_browser.move_selection(-1);
+        }
+        KeyEvent { code: KeyCode::Down | KeyCode::Char('j'), .. } => {
+            app.file_browser.move_selection(1);
+        }
+        KeyEvent { code: KeyCode::Enter | KeyCode::Char('l'), .. } => {
+            if let Some(path) = app.file_browser.enter_selected() {
+                app.pending_attachments.push(path);
+                app.focus = Focus::Input;
+            }
+        }
+        KeyEvent { code: KeyCode::Backspace, .. } | KeyEvent { code: KeyCode::Char('h'), .. } => {
+            app.file_browser.go_parent();
+        }
+        KeyEvent { code: KeyCode::Char(' ') | KeyCode::Char('v'), .. } => {
+            app.file_browser.toggle_mark();
+            app.file_browser.move_selection(1);
+        }
+        KeyEvent { code: KeyCode::Char('V'), .. } => {
+            let marked = app.file_browser.get_marked_or_selected();
+            if !marked.is_empty() {
+                app.pending_attachments.extend(marked);
+                app.focus = Focus::Input;
+            }
+        }
+        KeyEvent { code: KeyCode::Char('~'), .. } => {
+            app.file_browser.go_home();
+        }
+        KeyEvent { code: KeyCode::Char('.'), .. } => {
+            app.file_browser.toggle_hidden();
+        }
+        KeyEvent { code: KeyCode::Char('g'), .. } => {
+            app.file_browser.go_top();
+        }
+        KeyEvent { code: KeyCode::Char('G'), .. } => {
+            app.file_browser.go_bottom();
+        }
+        KeyEvent { code: KeyCode::Char('q'), .. } => {
+            app.focus = Focus::Input;
         }
         _ => {}
     }

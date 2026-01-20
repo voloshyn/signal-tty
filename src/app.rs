@@ -2,6 +2,8 @@ use crate::infrastructure::{IncomingMessage, SignalClient};
 use crate::storage::{
     Conversation, ConversationType, Message, MessageContent, SqliteStorage, StorageRepository,
 };
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -10,6 +12,7 @@ pub enum Focus {
     ConversationFilter,
     Messages,
     Input,
+    FileBrowser,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +82,156 @@ impl InputState {
     pub fn clear(&mut self) -> String {
         self.cursor = 0;
         std::mem::take(&mut self.text)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DirEntry {
+    pub name: String,
+    pub path: PathBuf,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
+#[derive(Debug)]
+pub struct FileBrowserState {
+    pub current_dir: PathBuf,
+    pub entries: Vec<DirEntry>,
+    pub selected: usize,
+    pub marked: HashSet<usize>,
+    pub show_hidden: bool,
+}
+
+impl Default for FileBrowserState {
+    fn default() -> Self {
+        let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        let mut state = Self {
+            current_dir,
+            entries: Vec::new(),
+            selected: 0,
+            marked: HashSet::new(),
+            show_hidden: false,
+        };
+        state.refresh();
+        state
+    }
+}
+
+impl FileBrowserState {
+    pub fn refresh(&mut self) {
+        self.entries.clear();
+        self.selected = 0;
+        self.marked.clear();
+
+        let Ok(read_dir) = std::fs::read_dir(&self.current_dir) else {
+            return;
+        };
+
+        let mut entries: Vec<DirEntry> = read_dir
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                if !self.show_hidden && name.starts_with('.') {
+                    return None;
+                }
+                let metadata = e.metadata().ok()?;
+                Some(DirEntry {
+                    name,
+                    path: e.path(),
+                    is_dir: metadata.is_dir(),
+                    size: metadata.len(),
+                })
+            })
+            .collect();
+
+        entries.sort_by(|a, b| {
+            match (a.is_dir, b.is_dir) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            }
+        });
+
+        self.entries = entries;
+    }
+
+    pub fn go_parent(&mut self) {
+        if let Some(parent) = self.current_dir.parent() {
+            self.current_dir = parent.to_path_buf();
+            self.refresh();
+        }
+    }
+
+    pub fn enter_selected(&mut self) -> Option<PathBuf> {
+        let entry = self.entries.get(self.selected)?;
+        if entry.is_dir {
+            self.current_dir = entry.path.clone();
+            self.refresh();
+            None
+        } else {
+            Some(entry.path.clone())
+        }
+    }
+
+    pub fn toggle_mark(&mut self) {
+        if self.selected < self.entries.len() && !self.entries[self.selected].is_dir {
+            if self.marked.contains(&self.selected) {
+                self.marked.remove(&self.selected);
+            } else {
+                self.marked.insert(self.selected);
+            }
+        }
+    }
+
+    pub fn get_marked_or_selected(&self) -> Vec<PathBuf> {
+        if self.marked.is_empty() {
+            if let Some(entry) = self.entries.get(self.selected) {
+                if !entry.is_dir {
+                    return vec![entry.path.clone()];
+                }
+            }
+            Vec::new()
+        } else {
+            self.marked
+                .iter()
+                .filter_map(|&idx| self.entries.get(idx))
+                .map(|e| e.path.clone())
+                .collect()
+        }
+    }
+
+    pub fn go_home(&mut self) {
+        if let Ok(home) = std::env::var("HOME") {
+            self.current_dir = PathBuf::from(home);
+            self.refresh();
+        }
+    }
+
+    pub fn toggle_hidden(&mut self) {
+        self.show_hidden = !self.show_hidden;
+        self.refresh();
+    }
+
+    pub fn move_selection(&mut self, delta: i32) {
+        if self.entries.is_empty() {
+            return;
+        }
+        let len = self.entries.len();
+        if delta < 0 {
+            self.selected = self.selected.saturating_sub((-delta) as usize);
+        } else {
+            self.selected = (self.selected + delta as usize).min(len - 1);
+        }
+    }
+
+    pub fn go_top(&mut self) {
+        self.selected = 0;
+    }
+
+    pub fn go_bottom(&mut self) {
+        if !self.entries.is_empty() {
+            self.selected = self.entries.len() - 1;
+        }
     }
 }
 
@@ -416,6 +569,8 @@ pub struct App {
     pub focus: Focus,
     pub input: InputState,
     pub filter_input: InputState,
+    pub file_browser: FileBrowserState,
+    pub pending_attachments: Vec<PathBuf>,
 
     pub should_quit: bool,
     pub status_message: Option<String>,
@@ -442,6 +597,8 @@ impl App {
             focus: Focus::Conversations,
             input: InputState::default(),
             filter_input: InputState::default(),
+            file_browser: FileBrowserState::default(),
+            pending_attachments: Vec::new(),
             should_quit: false,
             status_message: None,
             pending_send: None,
@@ -541,7 +698,7 @@ impl App {
         self.focus = match self.focus {
             Focus::Conversations | Focus::ConversationFilter => Focus::Messages,
             Focus::Messages => Focus::Input,
-            Focus::Input => Focus::Messages,
+            Focus::Input | Focus::FileBrowser => Focus::Messages,
         };
         self.filter_input.clear();
     }
@@ -552,7 +709,9 @@ impl App {
     }
 
     pub fn queue_send_message(&mut self, text: String) {
-        if !text.is_empty() && self.selected_conversation().is_some() {
+        if (!text.is_empty() || !self.pending_attachments.is_empty())
+            && self.selected_conversation().is_some()
+        {
             self.pending_send = Some(text);
         }
     }

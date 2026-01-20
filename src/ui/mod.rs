@@ -1,4 +1,5 @@
 mod conversations;
+mod file_browser;
 mod input;
 mod messages;
 
@@ -40,8 +41,12 @@ pub fn render(frame: &mut Frame, app: &mut App, avatar_manager: &mut Option<Avat
     .areas(right);
 
     conversations::render(frame, left, app, app.focus == Focus::Conversations, avatar_manager);
-    messages::render(frame, messages_area, app, app.focus == Focus::Messages, image_cache);
-    input::render(frame, input_area, app, app.focus == Focus::Input);
+    if app.focus == Focus::FileBrowser {
+        file_browser::render(frame, messages_area, app);
+    } else {
+        messages::render(frame, messages_area, app, app.focus == Focus::Messages, image_cache);
+    }
+    input::render(frame, input_area, app, app.focus == Focus::Input || app.focus == Focus::FileBrowser);
 
     if let Some(ref msg) = app.status_message {
         let status = Paragraph::new(Span::styled(msg, Style::default().fg(Color::Yellow)));

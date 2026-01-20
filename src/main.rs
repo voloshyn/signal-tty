@@ -50,6 +50,38 @@ fn now_millis() -> i64 {
         .as_millis() as i64
 }
 
+fn mime_from_path(path: &std::path::Path) -> Option<String> {
+    let ext = path.extension()?.to_str()?.to_lowercase();
+    let mime = match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "tiff" | "tif" => "image/tiff",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "avi" => "video/x-msvideo",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "flac" => "audio/flac",
+        "pdf" => "application/pdf",
+        "txt" => "text/plain",
+        "html" | "htm" => "text/html",
+        "json" => "application/json",
+        "xml" => "application/xml",
+        "zip" => "application/zip",
+        "tar" => "application/x-tar",
+        "gz" => "application/gzip",
+        _ => return None,
+    };
+    Some(mime.to_string())
+}
+
 fn get_my_number() -> Option<String> {
     let home = std::env::var("HOME").ok()?;
     let accounts_path =
@@ -157,12 +189,29 @@ async fn main() -> anyhow::Result<()> {
         }
 
         if let Some(text) = app.pending_send.take() {
+            let attachments = std::mem::take(&mut app.pending_attachments);
             needs_redraw = true;
             if let Some(target) = app.get_send_target() {
                 let my_uuid = app.my_uuid.clone().unwrap_or_default();
                 let conv_id = app
                     .selected_conversation()
                     .map(|c| c.conversation.id.clone());
+
+                let content = if !attachments.is_empty() {
+                    let att_info: Vec<_> = attachments
+                        .iter()
+                        .map(|p| storage::AttachmentInfo {
+                            id: None,
+                            content_type: mime_from_path(p),
+                            filename: p.file_name().map(|n| n.to_string_lossy().to_string()),
+                            size: p.metadata().ok().map(|m| m.len()),
+                            local_path: Some(p.to_string_lossy().to_string()),
+                        })
+                        .collect();
+                    MessageContent::Attachment { attachments: att_info }
+                } else {
+                    MessageContent::Text { body: text.clone() }
+                };
 
                 let mut message = None;
                 if let Some(ref conv_id) = conv_id {
@@ -174,7 +223,7 @@ async fn main() -> anyhow::Result<()> {
                         timestamp: now_millis(),
                         server_timestamp: None,
                         received_at: now_millis(),
-                        content: MessageContent::Text { body: text.clone() },
+                        content,
                         quote: None,
                         is_outgoing: true,
                         is_read: true,
@@ -185,9 +234,24 @@ async fn main() -> anyhow::Result<()> {
                     message = Some(msg);
                 }
 
+                for att_path in &attachments {
+                    if mime_from_path(att_path).is_some_and(|m| m.starts_with("image/")) {
+                        app.pending_preload_paths.push(att_path.to_string_lossy().to_string());
+                    }
+                }
+
+                let attachment_paths: Vec<String> = attachments
+                    .iter()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .collect();
+
                 let result = match &target {
                     SendTarget::Direct(recipient) => {
-                        app.signal.send_message(recipient, &text).await
+                        if attachment_paths.is_empty() {
+                            app.signal.send_message(recipient, &text).await
+                        } else {
+                            app.signal.send_message_with_attachments(recipient, &text, attachment_paths).await
+                        }
                     }
                     SendTarget::Group(group_id) => {
                         app.signal.send_group_message(group_id, &text).await
