@@ -195,8 +195,9 @@ fn handle_messages_key(app: &mut App, key: KeyEvent) {
             app.focus = Focus::Input;
         }
         KeyCode::Char('v') => {
+            let visible_height = app.messages_height;
             if let Some(conv) = app.selected_conversation_mut() {
-                conv.enter_selection_mode();
+                conv.enter_selection_mode(visible_height);
             }
         }
         _ => {}

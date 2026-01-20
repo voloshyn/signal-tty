@@ -223,13 +223,14 @@ impl ConversationView {
         }
     }
 
-    pub fn enter_selection_mode(&mut self) {
+    pub fn enter_selection_mode(&mut self, visible_height: usize) {
         if let Some(ref msgs) = self.messages {
             if !msgs.is_empty() {
-                let last_idx = msgs.len() - 1;
+                let center_line_from_bottom = self.scroll_offset + visible_height / 2;
+                let center_idx = msgs.len().saturating_sub(1 + center_line_from_bottom);
                 self.selection = Some(MessageSelection {
-                    anchor: last_idx,
-                    cursor: last_idx,
+                    anchor: center_idx,
+                    cursor: center_idx,
                 });
             }
         }
