@@ -115,6 +115,10 @@ fn handle_conversations_key(app: &mut App, key: KeyEvent) {
         KeyCode::Enter | KeyCode::Char('i') => {
             app.focus = Focus::Input;
         }
+        KeyCode::Char('H') => {
+            app.show_empty_conversations = !app.show_empty_conversations;
+            app.ensure_selection_matches_filter();
+        }
         _ => {}
     }
 }
@@ -200,6 +204,10 @@ fn handle_messages_key(app: &mut App, key: KeyEvent) {
             if let Some(conv) = app.selected_conversation_mut() {
                 conv.enter_selection_mode();
             }
+        }
+        KeyCode::Char('H') => {
+            app.show_empty_conversations = !app.show_empty_conversations;
+            app.ensure_selection_matches_filter();
         }
         _ => {}
     }

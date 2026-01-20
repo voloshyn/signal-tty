@@ -579,6 +579,7 @@ pub struct App {
     pub messages_height: usize,
     pub needs_image_preload: bool,
     pub pending_preload_paths: Vec<String>,
+    pub show_empty_conversations: bool,
 }
 
 impl App {
@@ -606,19 +607,20 @@ impl App {
             messages_height: 20,
             needs_image_preload: false,
             pending_preload_paths: Vec::new(),
+            show_empty_conversations: false,
         }
     }
 
     pub fn load_conversations(&mut self) {
         if let Ok(convs) = self.storage.list_conversations() {
-            self.conversations = convs
-                .into_iter()
-                .filter(|c| c.last_message_timestamp.is_some())
-                .map(ConversationView::new)
-                .collect();
-            if !self.conversations.is_empty() {
-                self.selected = 0;
-                if self.conversations[0].load_messages(&self.storage) {
+            self.conversations = convs.into_iter().map(ConversationView::new).collect();
+            let first_with_messages = self
+                .conversations
+                .iter()
+                .position(|c| c.conversation.last_message_timestamp.is_some());
+            if let Some(idx) = first_with_messages {
+                self.selected = idx;
+                if self.conversations[idx].load_messages(&self.storage) {
                     self.needs_image_preload = true;
                 }
             }
@@ -650,8 +652,17 @@ impl App {
     }
 
     pub fn select_next(&mut self) {
-        if !self.conversations.is_empty() {
-            self.selected = (self.selected + 1) % self.conversations.len();
+        let indices = self.filtered_conversation_indices();
+        if indices.is_empty() {
+            return;
+        }
+        let current_pos = indices.iter().position(|&i| i == self.selected);
+        let new_pos = match current_pos {
+            Some(pos) => (pos + 1) % indices.len(),
+            None => 0,
+        };
+        if let Some(&new_idx) = indices.get(new_pos) {
+            self.selected = new_idx;
             if self.conversations[self.selected].load_messages(&self.storage) {
                 self.needs_image_preload = true;
             }
@@ -659,11 +670,17 @@ impl App {
     }
 
     pub fn select_prev(&mut self) {
-        if !self.conversations.is_empty() {
-            self.selected = self
-                .selected
-                .checked_sub(1)
-                .unwrap_or(self.conversations.len() - 1);
+        let indices = self.filtered_conversation_indices();
+        if indices.is_empty() {
+            return;
+        }
+        let current_pos = indices.iter().position(|&i| i == self.selected);
+        let new_pos = match current_pos {
+            Some(pos) => pos.checked_sub(1).unwrap_or(indices.len() - 1),
+            None => 0,
+        };
+        if let Some(&new_idx) = indices.get(new_pos) {
+            self.selected = new_idx;
             if self.conversations[self.selected].load_messages(&self.storage) {
                 self.needs_image_preload = true;
             }
@@ -1016,7 +1033,16 @@ impl App {
     pub fn filtered_conversation_indices(&self) -> Vec<usize> {
         let filter = self.filter_input.text.to_lowercase();
         if filter.is_empty() {
-            return (0..self.conversations.len()).collect();
+            return self
+                .conversations
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| {
+                    self.show_empty_conversations
+                        || c.conversation.last_message_timestamp.is_some()
+                })
+                .map(|(i, _)| i)
+                .collect();
         }
 
         self.conversations
