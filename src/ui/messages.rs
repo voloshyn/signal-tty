@@ -176,8 +176,8 @@ pub fn render(
         let is_selected = selection_range
             .as_ref()
             .is_some_and(|r| r.contains(&msg_idx));
-        let bg_style = if is_selected {
-            Style::default().bg(Color::DarkGray)
+        let selection_style = if is_selected {
+            Style::default().add_modifier(Modifier::REVERSED)
         } else {
             Style::default()
         };
@@ -192,12 +192,12 @@ pub fn render(
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
-                .bg(bg_style.bg.unwrap_or(Color::Reset))
+                .patch(selection_style)
         } else {
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD)
-                .bg(bg_style.bg.unwrap_or(Color::Reset))
+                .patch(selection_style)
         };
 
         match &msg.content {
@@ -217,16 +217,12 @@ pub fn render(
                     let header = Line::from(vec![
                         Span::styled(
                             format!("[{}] ", timestamp),
-                            Style::default()
-                                .fg(Color::DarkGray)
-                                .bg(bg_style.bg.unwrap_or(Color::Reset)),
+                            Style::default().fg(Color::DarkGray).patch(selection_style),
                         ),
                         Span::styled(format!("{}: ", sender), sender_style),
                         Span::styled(
                             format!("📎 {}", name),
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .bg(bg_style.bg.unwrap_or(Color::Reset)),
+                            Style::default().fg(Color::Yellow).patch(selection_style),
                         ),
                     ]);
 
@@ -303,17 +299,13 @@ pub fn render(
                 let line = Line::from(vec![
                     Span::styled(
                         format!("[{}] ", timestamp),
-                        Style::default()
-                            .fg(Color::DarkGray)
-                            .bg(bg_style.bg.unwrap_or(Color::Reset)),
+                        Style::default().fg(Color::DarkGray).patch(selection_style),
                     ),
                     Span::styled(format!("{}: ", sender), sender_style),
-                    Span::styled(text, bg_style),
+                    Span::styled(text, selection_style),
                     Span::styled(
                         edited_suffix,
-                        Style::default()
-                            .fg(Color::DarkGray)
-                            .bg(bg_style.bg.unwrap_or(Color::Reset)),
+                        Style::default().fg(Color::DarkGray).patch(selection_style),
                     ),
                 ]);
 
