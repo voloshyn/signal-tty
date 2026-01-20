@@ -500,7 +500,7 @@ impl App {
         self.focus = match self.focus {
             Focus::Conversations | Focus::ConversationFilter => Focus::Messages,
             Focus::Messages => Focus::Input,
-            Focus::Input => Focus::Conversations,
+            Focus::Input => Focus::Messages,
         };
         self.filter_input.clear();
     }
