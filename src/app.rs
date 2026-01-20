@@ -103,6 +103,7 @@ pub struct ConversationView {
     pub scroll_offset: usize,
     pub has_more_messages: bool,
     pub selection: Option<MessageSelection>,
+    pub visible_range: Option<(usize, usize)>,
 }
 
 impl ConversationView {
@@ -113,6 +114,7 @@ impl ConversationView {
             scroll_offset: 0,
             has_more_messages: true,
             selection: None,
+            visible_range: None,
         }
     }
 
@@ -223,11 +225,14 @@ impl ConversationView {
         }
     }
 
-    pub fn enter_selection_mode(&mut self, visible_height: usize) {
+    pub fn enter_selection_mode(&mut self) {
         if let Some(ref msgs) = self.messages {
             if !msgs.is_empty() {
-                let center_line_from_bottom = self.scroll_offset + visible_height / 2;
-                let center_idx = msgs.len().saturating_sub(1 + center_line_from_bottom);
+                let center_idx = if let Some((start, end)) = self.visible_range {
+                    (start + end) / 2
+                } else {
+                    msgs.len() - 1
+                };
                 self.selection = Some(MessageSelection {
                     anchor: center_idx,
                     cursor: center_idx,

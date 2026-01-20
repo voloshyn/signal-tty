@@ -166,10 +166,12 @@ pub fn render(
     }
 
     let mut y_offset: i16 = -(skip_lines_at_start as i16);
+    let mut end_idx = start_idx;
     for (msg_idx, msg) in messages.iter().enumerate().skip(start_idx) {
         if y_offset >= inner_area.height as i16 {
             break;
         }
+        end_idx = msg_idx;
 
         let is_selected = selection_range
             .as_ref()
@@ -333,6 +335,10 @@ pub fn render(
                 y_offset += msg_height;
             }
         }
+    }
+
+    if let Some(conv) = app.selected_conversation_mut() {
+        conv.visible_range = Some((start_idx, end_idx));
     }
 
     if total_content_height > visible_height {
