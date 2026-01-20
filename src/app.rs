@@ -104,7 +104,9 @@ pub struct FileBrowserState {
 
 impl Default for FileBrowserState {
     fn default() -> Self {
-        let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        let current_dir = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
         let mut state = Self {
             current_dir,
             entries: Vec::new(),

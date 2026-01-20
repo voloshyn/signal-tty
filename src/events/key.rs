@@ -414,7 +414,7 @@ fn handle_file_browser_key(app: &mut App, key: KeyEvent) {
                 app.focus = Focus::Input;
             }
         }
-        KeyEvent { code: KeyCode::Backspace, .. } | KeyEvent { code: KeyCode::Char('h'), .. } => {
+        KeyEvent { code: KeyCode::Backspace | KeyCode::Char('h') | KeyCode::Char('u'), .. } => {
             app.file_browser.go_parent();
         }
         KeyEvent { code: KeyCode::Char(' ') | KeyCode::Char('v'), .. } => {
