@@ -10,7 +10,7 @@ use app::{App, RemoteDeleteTarget, SendTarget};
 use avatar::AvatarManager;
 use crossterm::ExecutableCommand;
 use crossterm::cursor;
-use crossterm::event::{self, DisableFocusChange, EnableFocusChange, Event};
+use crossterm::event::{self, DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture, Event};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use image_cache::ImageCache;
 use infrastructure::{SignalClient, SignalRepository};
@@ -118,6 +118,7 @@ async fn main() -> anyhow::Result<()> {
     stdout().execute(EnterAlternateScreen)?;
     stdout().execute(cursor::Hide)?;
     stdout().execute(EnableFocusChange)?;
+    stdout().execute(EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
@@ -146,6 +147,21 @@ async fn main() -> anyhow::Result<()> {
                         if !paths.is_empty() {
                             // TODO: hardcoded max width
                             cache.preload_images(&paths, 60);
+                        }
+                    }
+
+                    if let Some((recipient, timestamps)) = app.mark_current_conversation_read() {
+                        let _ = app.signal.send_read_receipt(&recipient, timestamps).await;
+                    }
+
+                    needs_redraw = true;
+                }
+                Event::Mouse(mouse_event) => {
+                    events::handle_mouse_event(&mut app, mouse_event);
+
+                    while event::poll(Duration::from_millis(0))? {
+                        if let Event::Mouse(next_mouse) = event::read()? {
+                            events::handle_mouse_event(&mut app, next_mouse);
                         }
                     }
 
@@ -304,6 +320,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     stdout().execute(cursor::Show)?;
+    stdout().execute(DisableMouseCapture)?;
     stdout().execute(DisableFocusChange)?;
     terminal::disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;

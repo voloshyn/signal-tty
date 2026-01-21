@@ -2,6 +2,7 @@ use crate::infrastructure::{IncomingMessage, SignalClient};
 use crate::storage::{
     Conversation, ConversationType, Message, MessageContent, SqliteStorage, StorageRepository,
 };
+use ratatui::layout::Rect;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -567,6 +568,15 @@ pub struct PendingRemoteDelete {
     pub timestamps: Vec<i64>,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LayoutAreas {
+    pub conversations: Rect,
+    pub conversations_list: Rect,
+    pub conversations_scroll_offset: usize,
+    pub messages: Rect,
+    pub input: Rect,
+}
+
 pub struct App {
     pub storage: Arc<SqliteStorage>,
     pub signal: SignalClient,
@@ -589,6 +599,9 @@ pub struct App {
     pub needs_image_preload: bool,
     pub pending_preload_paths: Vec<String>,
     pub show_empty_conversations: bool,
+
+    pub layout_areas: LayoutAreas,
+    pub message_y_positions: Vec<(usize, u16, u16)>,
 }
 
 impl App {
@@ -617,6 +630,8 @@ impl App {
             needs_image_preload: false,
             pending_preload_paths: Vec::new(),
             show_empty_conversations: false,
+            layout_areas: LayoutAreas::default(),
+            message_y_positions: Vec::new(),
         }
     }
 

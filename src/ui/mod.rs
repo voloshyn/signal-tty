@@ -40,7 +40,14 @@ pub fn render(frame: &mut Frame, app: &mut App, avatar_manager: &mut Option<Avat
     ])
     .areas(right);
 
-    conversations::render(frame, left, app, app.focus == Focus::Conversations, avatar_manager);
+    app.layout_areas.conversations = left;
+    app.layout_areas.messages = messages_area;
+    app.layout_areas.input = input_area;
+
+    let (conversations_list_rect, conversations_scroll_offset) = conversations::render(frame, left, app, app.focus == Focus::Conversations, avatar_manager);
+    app.layout_areas.conversations_list = conversations_list_rect;
+    app.layout_areas.conversations_scroll_offset = conversations_scroll_offset;
+
     if app.focus == Focus::FileBrowser {
         file_browser::render(frame, messages_area, app);
     } else {

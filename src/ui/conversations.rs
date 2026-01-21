@@ -18,7 +18,7 @@ pub fn render(
     app: &App,
     focused: bool,
     avatar_manager: &mut Option<AvatarManager>,
-) {
+) -> (Rect, usize) {
     let in_filter_mode = app.focus == Focus::ConversationFilter;
     let has_filter = !app.filter_input.text.is_empty();
     let border_color = if focused || in_filter_mode {
@@ -47,7 +47,7 @@ pub fn render(
         if let Some(filter_area) = filter_area {
             render_filter_input(frame, filter_area, app);
         }
-        return;
+        return (list_inner, 0);
     }
 
     let has_avatars = avatar_manager.is_some();
@@ -126,6 +126,8 @@ pub fn render(
 
     frame.render_stateful_widget(list, list_area, &mut state);
 
+    let scroll_offset = state.offset();
+
     if let Some(mgr) = avatar_manager {
         render_avatars_filtered(
             frame,
@@ -133,13 +135,15 @@ pub fn render(
             app,
             mgr,
             &filtered_indices,
-            state.offset(),
+            scroll_offset,
         );
     }
 
     if let Some(filter_area) = filter_area {
         render_filter_input(frame, filter_area, app);
     }
+
+    (list_inner, scroll_offset)
 }
 
 fn render_placeholder(frame: &mut Frame, area: Rect, name: &str, conv_type: ConversationType) {

@@ -165,6 +165,8 @@ pub fn render(
         cumulative_height += msg_height;
     }
 
+    app.message_y_positions.clear();
+
     let mut y_offset: i16 = -(skip_lines_at_start as i16);
     let mut end_idx = start_idx;
     for (msg_idx, msg) in messages.iter().enumerate().skip(start_idx) {
@@ -172,6 +174,8 @@ pub fn render(
             break;
         }
         end_idx = msg_idx;
+
+        let msg_start_y = y_offset.max(0) as u16;
 
         let is_selected = selection_range
             .as_ref()
@@ -326,6 +330,11 @@ pub fn render(
                 }
                 y_offset += msg_height;
             }
+        }
+
+        let msg_end_y = y_offset.max(0) as u16;
+        if msg_end_y > msg_start_y {
+            app.message_y_positions.push((msg_idx, msg_start_y, msg_end_y));
         }
     }
 
